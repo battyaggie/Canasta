@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist/public/js",
+    "rootDir": ".",
+    "sourceMap": false,
+    "types": []
+  },
+  "include": ["engine/src", "shared", "server/room.ts", "web"],
+  "exclude": ["web/e2e"]
+}

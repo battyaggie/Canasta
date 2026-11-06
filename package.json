@@ -1,0 +1,22 @@
+{
+  "name": "canasta-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Online Canasta for 2 or 4 players, live or turn-based. Cloudflare Durable Objects + a plain TypeScript web client.",
+  "scripts": {
+    "test": "tsx --test engine/test/*.test.ts server/test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build:web": "node scripts/build-web.mjs",
+    "dev": "npm run build:web && wrangler dev",
+    "deploy": "npm run build:web && wrangler deploy",
+    "local": "npm run build:web && node scripts/serve-local.mjs",
+    "e2e": "npm run build:web && tsx web/e2e/passplay.e2e.ts && tsx web/e2e/online.e2e.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}

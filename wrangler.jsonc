@@ -1,0 +1,19 @@
+{
+  // Cloudflare Worker + Durable Object + static assets for the Canasta app.
+  "name": "canasta",
+  "main": "server/worker.ts",
+  "compatibility_date": "2026-10-01",
+
+  // The browser app is built into dist/public by `npm run build:web`.
+  "assets": {
+    "directory": "./dist/public",
+    "binding": "ASSETS"
+  },
+
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "GameRoom" }]
+  },
+
+  // SQLite-backed Durable Objects are the ones available on the free plan.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }]
+}
