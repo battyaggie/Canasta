@@ -51,6 +51,11 @@ usually <http://localhost:8787>. Open it in two browser windows to play against 
 Wrangler prints your game's address (`https://canasta.<your-name>.workers.dev`). Share that with your
 friends. Everything it uses is on Cloudflare's free plan at this scale.
 
+### Automatic deploys from GitHub
+
+The Cloudflare worker is connected to this repository (branch `main`). Every push to `main` is built and deployed by Cloudflare
+(build command `npm run build:web`, deploy command `npx wrangler deploy`), so you do not need `npm run deploy` on your Mac any more.
+
 ## Checks
 
 ```
