@@ -325,3 +325,10 @@ html.xr { font-size: 20px; }
 /* The hint sits in the bottom-left corner, beside the hand, so it never covers the players' faces and names. */
 .three-hint { position: fixed; left: 10px; bottom: max(10px, env(safe-area-inset-bottom)); max-width: min(360px, 34vw); margin: 0; padding: 8px 12px; border-radius: 10px; background: rgba(10, 30, 20, 0.85); color: #fff; font-size: 0.95rem; }
 .three-hint.mine { background: rgba(224, 178, 46, 0.95); color: #111; }
+
+/* "A new version is ready" during a game: small, at the top, out of the way of the cards. */
+.update-note {
+  position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0;
+  max-width: min(520px, calc(100vw - 32px)); padding: 6px 12px; border-radius: 8px;
+  background: #2f8fe0; color: #fff; font-size: 0.85rem; text-align: center; pointer-events: none;
+}

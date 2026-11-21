@@ -51,6 +51,8 @@ let target: MeldPlay['rank'] | null = null;
 
 /** The 3D table (three.js, loaded only when someone asks for it). */
 let table3d: Table3D | null = null;
+/** A new version of the app has arrived; it loads at the start page. */
+let updateReady = false;
 let in3d = false;
 let xr = { vr: false, ar: false };
 const host3d = h('div', { class: 'three-host', id: 'three-host' });
@@ -1157,6 +1159,10 @@ function renderCover(): HTMLElement {
 // ------------------------------------------------------------------ render
 
 function render(): void {
+  if (updateReady && !transport && !fatal) {
+    location.reload();
+    return;
+  }
   const children: (HTMLElement | null)[] = [];
   if (fatal) children.push(renderError(fatal));
   else if (!transport) children.push(renderHome());
@@ -1171,6 +1177,7 @@ function render(): void {
     children.push(renderOverlay());
   }
   if (toastText) children.push(h('div', { class: 'toast', role: 'status' }, toastText));
+  if (updateReady && !in3d) children.push(h('p', { class: 'update-note', role: 'status' }, 'A new version of Canasta is ready. It starts when you go back to the start page.'));
   appEl.replaceChildren(...children.filter((c): c is HTMLElement => c !== null));
 }
 
@@ -1202,7 +1209,24 @@ window.setInterval(() => {
 
 // Offline support: after one visit the app opens without a connection (pass & play needs none).
 if ('serviceWorker' in navigator && !new URLSearchParams(location.search).has('nosw')) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {
-    // not available (private mode, plain http on a LAN address): the game still works online
+  // Automatic updates. A new version takes over as soon as it has downloaded (sw.js skips waiting);
+  // the page then reloads by itself if you are on the start page. During a game a note says that
+  // the new version loads when you go back to the start page, so a game is never interrupted.
+  const hadVersion = !!navigator.serviceWorker.controller; // false on the very first visit: nothing to update
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadVersion || updateReady) return;
+    updateReady = true;
+    render();
   });
+  navigator.serviceWorker
+    .register('/sw.js')
+    .then((reg) => {
+      // Headsets and phones keep a tab open for days: look for a new version whenever the app comes back to the front.
+      const check = () => void reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && check());
+      window.setInterval(check, 30 * 60_000);
+    })
+    .catch(() => {
+      // not available (private mode, plain http on a LAN address): the game still works online
+    });
 }
