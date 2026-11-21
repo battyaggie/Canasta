@@ -132,6 +132,8 @@ export class Table3D {
   private avatars = new Map<number, AvatarParts>();
   private hits: THREE.Object3D[] = [];
   private named = new Map<string, THREE.Object3D>();
+  /** Name signs that turn to face the viewer. */
+  private billboards: THREE.Object3D[] = [];
   private hovered = new Set<THREE.Object3D>();
   private raycaster = new THREE.Raycaster();
   private model: TableModel | null = null;
@@ -312,6 +314,7 @@ export class Table3D {
     this.hovered.clear();
     const cloth = this.named.get('cloth')!;
     this.hits = [cloth];
+    this.billboards = [];
     this.named = new Map([['cloth', cloth]]);
     if (!m) return;
     const v = m.view;
@@ -568,14 +571,17 @@ export class Table3D {
       this.dynamic.add(seatGroup);
       const turn = v.status === 'playing' && v.turn.player === seat;
       const tag = textPanel(`${m.seatNames[seat] ?? `Seat ${seat + 1}`}${online ? '' : ' (away)'}`, {
-        width: 0.26,
-        height: 0.05,
-        size: 0.024,
+        width: 0.36,
+        height: 0.07,
+        size: 0.036,
         bold: true,
-        bg: turn ? '#e0b22e' : 'rgba(10,30,20,0.85)',
+        bg: turn ? '#e0b22e' : 'rgba(10,30,20,0.88)',
         fg: turn ? '#111' : '#fff',
+        border: turn ? '#ffffff' : undefined,
       });
-      tag.position.set(0, 1.48, 0);
+      // Above the head (which reaches about 1.48 m), turned to face the viewer every frame.
+      tag.position.set(0, 1.62, 0);
+      this.billboards.push(tag);
       seatGroup.add(tag);
       // Their hand, backs towards me, held in front of the body.
       const count = v.handSizes[seat] ?? 0;
@@ -592,9 +598,11 @@ export class Table3D {
         c.rotation.z = a;
         fan.add(c);
       }
-      const countTag = textPanel(`${count} cards`, { width: 0.1, height: 0.026, size: 0.015 });
-      countTag.position.set(0, 1.08, 0.3);
+      const countTag = textPanel(`${m.seatNames[seat] ?? `Seat ${seat + 1}`} · ${count} cards`, { width: 0.26, height: 0.042, size: 0.022, bold: true });
+      // A name badge on the chest as well, so names show even when the sign above the head is out of view.
+      countTag.position.set(0, 1.06, 0.12);
       seatGroup.add(countTag);
+      this.billboards.push(countTag);
     }
     for (const [seat, av] of this.avatars) {
       if (!keep.has(seat)) {
@@ -953,6 +961,12 @@ export class Table3D {
       this.pokeHands();
     }
     this.animateAvatars(t);
+    const eye = (this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera).getWorldPosition(new THREE.Vector3());
+    for (const b of this.billboards) {
+      // Turn about the vertical only, so the sign stays upright.
+      const p = b.getWorldPosition(new THREE.Vector3());
+      b.lookAt(eye.x, p.y, eye.z);
+    }
     this.renderer.render(this.scene, this.camera);
   };
 }
