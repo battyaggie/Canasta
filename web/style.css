@@ -331,3 +331,10 @@ html.xr { font-size: 20px; }
 .rejoin { border-color: var(--accent); background: rgba(240,194,75,0.14); }
 .rejoin-code { font-size: 1.6rem; letter-spacing: 0.2em; color: var(--accent); }
 .home .rejoin button.primary { margin-top: 0; }
+
+/* "A new version is ready" during a game: small, at the top, out of the way of the cards. */
+.update-note {
+  position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0;
+  max-width: min(520px, calc(100vw - 32px)); padding: 6px 12px; border-radius: 8px;
+  background: #2f8fe0; color: #fff; font-size: 0.85rem; text-align: center; pointer-events: none;
+}

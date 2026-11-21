@@ -4,7 +4,7 @@
 import { CloudflareSim } from './cfsim.js';
 import { chromium, check, eventually, startStatic, watchErrors } from './util.js';
 
-const PORT = 8127;
+const PORT = 8133;
 const SHOTS = process.env.SHOTS ?? '/tmp/canasta-shots';
 const errors: string[] = [];
 
