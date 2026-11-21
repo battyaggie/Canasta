@@ -38,6 +38,26 @@ try {
 
   /** Point an input (controller or hand) at a named thing from 25 cm away and squeeze/pinch. */
   async function pointAndSelect(name: string, input: 'controller' | 'hand'): Promise<void> {
+    await aimAt(name, input);
+    await press(input, 1);
+    await press(input, 0);
+  }
+
+  /** Pull the trigger / pinch (value 1) or let go (0); `grip` uses the controller's grip button instead. */
+  async function press(input: 'controller' | 'hand', value: number, grip = false): Promise<void> {
+    await page.evaluate(
+      ({ input, value, grip }) => {
+        const dev = (window as any).__device;
+        if (input === 'hand') dev.hands.right.updatePinchValue(value);
+        else dev.controllers.right.updateButtonValue(grip ? 'squeeze' : 'trigger', value);
+      },
+      { input, value, grip },
+    );
+    await page.waitForTimeout(150);
+  }
+
+  /** Point an input at a named thing from 25 cm away. */
+  async function aimAt(name: string, input: 'controller' | 'hand'): Promise<void> {
     await page.waitForTimeout(150);
     const target = await page.evaluate((n: string) => (window as any).__canasta3d.world(n), name);
     if (!target) throw new Error(`nothing called ${name}`);
@@ -61,18 +81,6 @@ try {
       { from, q, input },
     );
     await page.waitForTimeout(150);
-    await page.evaluate((input) => {
-      const dev = (window as any).__device;
-      if (input === 'hand') dev.hands.right.updatePinchValue(1);
-      else dev.controllers.right.updateButtonValue('trigger', 1);
-    }, input);
-    await page.waitForTimeout(150);
-    await page.evaluate((input) => {
-      const dev = (window as any).__device;
-      if (input === 'hand') dev.hands.right.updatePinchValue(0);
-      else dev.controllers.right.updateButtonValue('trigger', 0);
-    }, input);
-    await page.waitForTimeout(150);
   }
 
   // Nothing in my hand may hide the middle of the table from my eyes.
@@ -91,12 +99,30 @@ try {
   await pointAndSelect('button:clear', 'controller');
   await eventually(async () => (await names()).includes('button:clear'), (x) => !x, 'controller: the Clear button works');
 
+  // Grip on a card picks it up; letting go over the hand puts it back.
+  await aimAt(`card:${first}`, 'controller');
+  await press('controller', 1, true);
+  await eventually(async () => (await names()).includes('carry'), (x) => x, 'controller: the grip button picks up a card');
+  await press('controller', 0, true);
+  await eventually(async () => (await names()).includes('carry'), (x) => !x, 'controller: letting go over the hand puts it back');
+  check((await hand()).length === start + 1, 'nothing was played by putting the card back');
+  await pointAndSelect('button:clear', 'controller');
+
   await page.evaluate(() => ((window as any).__device.primaryInputMode = 'hand'));
   await page.waitForTimeout(300);
   await pointAndSelect(`card:${first}`, 'hand');
   await eventually(async () => (await names()).includes('button:clear'), (x) => x, 'hands: a pinch while pointing selects a card');
-  await pointAndSelect('pile', 'hand');
-  await eventually(async () => (await names()).includes('button:reveal'), (x) => x, 'hands: pinching at the pile discards and ends the turn');
+  await pointAndSelect('button:clear', 'hand');
+  await eventually(async () => (await names()).includes('button:clear'), (x) => !x, 'hands: a pinch on Clear works');
+
+  // Pinch and hold on a card, carry it to the pile, let go: discarded.
+  await aimAt(`card:${first}`, 'hand');
+  await press('hand', 1);
+  await page.waitForTimeout(500);
+  await eventually(async () => (await names()).includes('carry'), (x) => x, 'hands: pinch and hold picks up a card');
+  await aimAt('pile', 'hand');
+  await press('hand', 0);
+  await eventually(async () => (await names()).includes('button:reveal'), (x) => x, 'hands: carrying the card to the pile and letting go discards it');
 
   await page.screenshot({ path: `${SHOTS}/3d-xr-mirror.png` });
   await page.evaluate(() => (window as any).__device.primaryInputMode = 'controller');

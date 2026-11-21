@@ -76,6 +76,46 @@ try {
   await page.locator('#hand').waitFor();
   check((await page.locator('#hand .card').count()) === 15, '"2D view" returns to the normal table');
 
+  // Dragging: pick two aces, drag the third onto the cloth: all three are laid down as a meld.
+  const pageD = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
+  watchErrors(pageD, '3d-drag', errors);
+  await pageD.goto(`http://localhost:${PORT}/?seed=${seed}&nosw`);
+  await pageD.click('#local2');
+  await pageD.click('#ready');
+  await pageD.click('#enter-3d');
+  await pageD.waitForFunction(() => (window as any).__canasta3d?.names().some((n: string) => n.startsWith('card:')));
+  const namesD = (): Promise<string[]> => pageD.evaluate(() => (window as any).__canasta3d.names());
+  const handD = async () => (await namesD()).filter((n) => n.startsWith('card:')).map((n) => Number(n.slice(5)));
+  const pointD = async (name: string) => {
+    const p = await pageD.evaluate((n: string) => (window as any).__canasta3d.point(n), name);
+    if (!p) throw new Error(`nothing called ${name} on the table`);
+    return p as { x: number; y: number };
+  };
+  const drag = async (from: string, to: string, shot?: string) => {
+    const a = await pointD(from);
+    const b = await pointD(to);
+    await pageD.mouse.move(a.x, a.y);
+    await pageD.mouse.down();
+    for (let i = 1; i <= 8; i++) await pageD.mouse.move(a.x + ((b.x - a.x) * i) / 8, a.y + ((b.y - a.y) * i) / 8);
+    if (shot) await pageD.screenshot({ path: shot });
+    check((await pageD.evaluate(([x, y]) => (window as any).__canasta3d.at(x, y), [b.x, b.y])) === to, `while carrying, the ${to} is under the pointer`);
+    check((await namesD()).includes('carry'), `dragging ${from} carries it`);
+    await pageD.mouse.up();
+  };
+  await pageD.mouse.click((await pointD('stock')).x, (await pointD('stock')).y);
+  await eventually(async () => (await handD()).length, (n) => n === 16, 'drag test: drew a card');
+  const acesD = (await handD()).filter((id) => ALL_CARDS[id].rank === 'A').slice(0, 3);
+  for (const id of acesD.slice(0, 2)) {
+    const p = await pointD(`card:${id}`);
+    await pageD.mouse.click(p.x, p.y);
+  }
+  await drag(`card:${acesD[2]}`, 'cloth', `${SHOTS}/3d-07-dragging.png`);
+  await eventually(async () => (await namesD()).includes('meld:mine:A'), (x) => x, 'dragging the third ace onto the cloth lays down all three aces');
+  check(!(await namesD()).includes('carry'), 'the carried cards are gone once laid down');
+  const [lastD] = await handD();
+  await drag(`card:${lastD}`, 'pile');
+  await eventually(async () => (await namesD()).includes('button:reveal'), (x) => x, 'dragging a card onto the pile discards it');
+
   // Four players: three avatars round the table.
   const page4 = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
   watchErrors(page4, '3d-4p', errors);

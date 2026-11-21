@@ -160,7 +160,13 @@ export class Table3D {
   private needsRecentre = false;
   private framesInSession = 0;
   private lastToast: string | null = null;
-  private pointerDown: { x: number; y: number } | null = null;
+  private pointerDown: { x: number; y: number; card: number | null } | null = null;
+  /** Mouse position (normalised) while carrying cards with the mouse. */
+  private pointerNdc = new THREE.Vector2();
+  /** A trigger, pinch or grip held on a card in my hand that may turn into carrying it. */
+  private pending: { source: THREE.Group; card: number; t: number; from: THREE.Vector3 } | null = null;
+  /** Cards being carried by hand (or mouse), to be put down on the table. */
+  private carry: { ids: number[]; source: THREE.Group | 'mouse'; by: 'select' | 'squeeze' | 'mouse'; group: THREE.Group } | null = null;
   private clock = new THREE.Clock();
 
   constructor(
@@ -209,6 +215,12 @@ export class Table3D {
       names: () => [...this.named.keys()],
       world: (name: string) => this.named.get(name)?.getWorldPosition(new THREE.Vector3()).toArray() ?? null,
       presenting: () => this.renderer.xr.isPresenting,
+      /** What a click at this screen point would hit (tests). */
+      at: (x: number, y: number) => {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const hit = this.ndcHit(new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1));
+        return hit ? ([...this.named].find(([, o]) => o === hit.object)?.[0] ?? (hit.object.userData.hit as Hit).kind) : null;
+      },
       /** What the player's eye sees first when looking at a named thing (tests: is it hidden behind the hand?). */
       seenFirst: (name: string) => {
         const obj = this.named.get(name);
@@ -842,7 +854,29 @@ export class Table3D {
       const entry = { ray, line, source: null as XRInputSource | null };
       ray.addEventListener('connected', (e) => (entry.source = (e as unknown as { data: XRInputSource }).data));
       ray.addEventListener('disconnected', () => (entry.source = null));
-      ray.addEventListener('select', () => this.tapFrom(ray));
+      ray.addEventListener('select', () => {
+        // Letting go of the trigger or pinch while carrying puts the cards down, and is not a tap.
+        if (this.carry?.source === ray) return this.dropCarry();
+        this.pending = null;
+        this.tapFrom(ray);
+      });
+      // Hold the trigger (or pinch) on a card in your hand and move: the card, with any others you picked, comes along.
+      ray.addEventListener('selectstart', () => {
+        const id = this.handCardFrom(ray);
+        if (id !== null) this.pending = { source: ray, card: id, t: this.clock.getElapsedTime(), from: ray.getWorldPosition(new THREE.Vector3()) };
+      });
+      ray.addEventListener('selectend', () => {
+        if (this.pending?.source === ray) this.pending = null;
+        if (this.carry?.source === ray && this.carry.by === 'select') this.dropCarry();
+      });
+      // The grip button picks cards up straight away.
+      ray.addEventListener('squeezestart', () => {
+        const id = this.handCardFrom(ray);
+        if (id !== null && !this.carry) this.startCarry(id, ray, 'squeeze');
+      });
+      ray.addEventListener('squeezeend', () => {
+        if (this.carry?.source === ray) this.dropCarry();
+      });
       this.scene.add(ray);
       this.controllers.push(entry);
 
@@ -859,6 +893,94 @@ export class Table3D {
     dir.applyQuaternion(obj.getWorldQuaternion(new THREE.Quaternion()));
     this.raycaster.set(origin, dir);
     return this.raycaster.intersectObjects(this.hits, false)[0];
+  }
+
+  /** The card in my hand that a controller or pinch ray points at, if any. */
+  private handCardFrom(ray: THREE.Group): number | null {
+    const hit = this.rayFrom(ray)?.object.userData.hit as Hit | undefined;
+    return hit?.kind === 'card' ? hit.id : null;
+  }
+
+  /** Pick up a card from the hand, together with the other cards already picked. */
+  private startCarry(id: number, source: THREE.Group | 'mouse', by: 'select' | 'squeeze' | 'mouse'): void {
+    const m = this.model;
+    if (!m) return;
+    this.pending = null;
+    const ids = m.selected.has(id) ? [...m.selected] : [...m.selected, id];
+    if (!m.selected.has(id)) this.actions.tapCard(id); // the grabbed card counts as picked
+    const group = new THREE.Group();
+    ids.forEach((cid, i) => {
+      const c = this.card(cid);
+      c.position.set((i - (ids.length - 1) / 2) * 0.022, 0, i * 0.0008);
+      c.rotation.z = -(i - (ids.length - 1) / 2) * 0.06;
+      group.add(c);
+    });
+    this.scene.add(group);
+    this.carry = { ids, source, by, group };
+    this.named.set('carry', group);
+    this.buzz(0.3);
+  }
+
+  /** Where the carried cards would land: a meld of mine, the pile, or the cloth. */
+  private dropTarget(): Hit | null {
+    const c = this.carry;
+    if (!c) return null;
+    const hit = c.source === 'mouse' ? this.ndcHit(this.pointerNdc) : this.rayFrom(c.source);
+    const h = hit?.object.userData.hit as Hit | undefined;
+    if (!h) return null;
+    if (h.kind === 'pile' || h.kind === 'cloth' || (h.kind === 'meld' && this.named.get(`meld:mine:${h.rank}`) === hit!.object)) return h;
+    return null;
+  }
+
+  /** Let go: on a meld adds to it, on the cloth lays the cards down as a new meld, on the pile discards (or takes it). */
+  private dropCarry(): void {
+    const c = this.carry;
+    if (!c) return;
+    const target = this.dropTarget();
+    this.scene.remove(c.group);
+    disposeObject(c.group);
+    this.carry = null;
+    this.named.delete('carry');
+    if (!target) return; // back into the hand
+    if (target.kind === 'pile') this.actions.tapPile();
+    else if (target.kind === 'meld') {
+      this.actions.tapMeld(target.rank);
+      this.actions.layDown();
+    } else this.actions.layDown();
+    this.buzz(0.4);
+  }
+
+  /** Each frame: start carrying after a short hold or a move, and keep the carried cards with the hand. */
+  private updateCarry(): void {
+    const p = this.pending;
+    if (p && !this.carry) {
+      const moved = p.source.getWorldPosition(new THREE.Vector3()).distanceTo(p.from);
+      if (moved > 0.04 || this.clock.getElapsedTime() - p.t > 0.4) {
+        this.startCarry(p.card, p.source, 'select');
+      }
+    }
+    const c = this.carry;
+    if (!c) return;
+    const origin = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    let face: THREE.Vector3;
+    if (c.source === 'mouse') {
+      this.raycaster.setFromCamera(this.pointerNdc, this.camera);
+      origin.copy(this.raycaster.ray.origin);
+      dir.copy(this.raycaster.ray.direction);
+      face = this.camera.getWorldPosition(new THREE.Vector3());
+      c.group.position.copy(origin).addScaledVector(dir, 0.45);
+    } else {
+      c.source.getWorldPosition(origin);
+      dir.set(0, 0, -1).applyQuaternion(c.source.getWorldQuaternion(new THREE.Quaternion()));
+      face = this.renderer.xr.getCamera().getWorldPosition(new THREE.Vector3());
+      c.group.position.copy(origin).addScaledVector(dir, 0.1);
+    }
+    c.group.lookAt(face);
+    const target = this.dropTarget();
+    // The cloth is never enlarged: it would rise above the cards lying on it.
+    const over = target && target.kind !== 'cloth' ? this.hits.filter((o) => o.userData.hit === target) : [];
+    this.setHover(over);
   }
 
   private tapFrom(obj: THREE.Object3D): void {
@@ -883,26 +1005,44 @@ export class Table3D {
     }
   }
 
-  private screenHit(e: PointerEvent): THREE.Intersection | undefined {
+  private toNdc(e: PointerEvent): THREE.Vector2 {
     const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    return new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  }
+
+  private ndcHit(ndc: THREE.Vector2): THREE.Intersection | undefined {
     this.raycaster.setFromCamera(ndc, this.camera);
     return this.raycaster.intersectObjects(this.hits, false)[0];
   }
 
+  private screenHit(e: PointerEvent): THREE.Intersection | undefined {
+    return this.ndcHit(this.toNdc(e));
+  }
+
   private onPointerDown = (e: PointerEvent): void => {
-    this.pointerDown = { x: e.clientX, y: e.clientY };
+    const hit = this.screenHit(e)?.object.userData.hit as Hit | undefined;
+    this.pointerDown = { x: e.clientX, y: e.clientY, card: hit?.kind === 'card' ? hit.id : null };
+    this.pointerNdc.copy(this.toNdc(e));
   };
 
   private onPointerUp = (e: PointerEvent): void => {
     const down = this.pointerDown;
     this.pointerDown = null;
+    if (this.carry?.source === 'mouse') {
+      this.pointerNdc.copy(this.toNdc(e));
+      return this.dropCarry();
+    }
     if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 12) return;
     const hit = this.screenHit(e);
     if (hit) this.run(hit.object.userData.hit as Hit);
   };
 
   private onPointerMove = (e: PointerEvent): void => {
+    this.pointerNdc.copy(this.toNdc(e));
+    // Drag a card out of the hand (mouse or touch): it is carried like in the headset.
+    const down = this.pointerDown;
+    if (down && down.card !== null && !this.carry && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 12) this.startCarry(down.card, 'mouse', 'mouse');
+    if (this.carry) return;
     if (e.pointerType !== 'mouse') return;
     const hit = this.screenHit(e);
     this.setHover(hit && hit.object.userData.hit.kind !== 'cloth' ? [hit.object] : []);
@@ -1018,10 +1158,11 @@ export class Table3D {
         c.line.scale.z = hit ? hit.distance : 2;
         if (hit && (hit.object.userData.hit as Hit).kind !== 'cloth') rayHits.push(hit.object);
       }
-      this.setHover(rayHits);
+      if (!this.carry) this.setHover(rayHits);
       this.drawHandJoints();
       this.pokeHands();
     }
+    this.updateCarry();
     this.animateAvatars(t);
     const eye = (this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera).getWorldPosition(new THREE.Vector3());
     for (const b of this.billboards) {
