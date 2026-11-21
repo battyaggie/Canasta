@@ -1,6 +1,6 @@
 // Builds the browser app into dist/public:
 //   - compiles web/, shared/, engine/src and server/room.ts to plain ES modules
-//   - copies index.html, style.css, the manifest and icons next to them
+//   - copies index.html, style.css, the manifest and icons next to them, and three.js for the 3D table
 //   - writes sw.js (offline support) listing every file
 // No bundler: modern browsers load the modules directly.
 import { execSync } from 'node:child_process';
@@ -15,6 +15,11 @@ cpSync('web/index.html', 'dist/public/index.html');
 cpSync('web/style.css', 'dist/public/style.css');
 cpSync('web/manifest.webmanifest', 'dist/public/manifest.webmanifest');
 cpSync('web/icons', 'dist/public/icons', { recursive: true });
+// three.js for the 3D table, loaded through the import map in index.html (still no bundler).
+// The page only loads it when someone opens the 3D table (the service worker still keeps a copy for offline use).
+mkdirSync('dist/public/vendor/three', { recursive: true });
+cpSync('node_modules/three/build/three.module.min.js', 'dist/public/vendor/three/three.module.min.js');
+cpSync('node_modules/three/LICENSE', 'dist/public/vendor/three/LICENSE.txt');
 
 // The service worker caches every file of the app. Its name changes whenever any file changes,
 // which is how phones learn that a new version is available.

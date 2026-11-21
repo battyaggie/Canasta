@@ -56,10 +56,33 @@ friends. Everything it uses is on Cloudflare's free plan at this scale.
 The Cloudflare worker is connected to this repository (branch `main`). Every push to `main` is built and deployed by Cloudflare
 (build command `npm run build:web`, deploy command `npx wrangler deploy`), so you do not need `npm run deploy` on your Mac any more.
 
+## 3D table and Meta Quest 3
+
+In a game, press **3D table** (top bar). You sit at a card table in a virtual room, with an avatar for every other
+player. It works with a mouse or touch on any screen, and in a headset:
+
+1. Open your game's **https** address in the Quest Browser (WebXR only runs on https, or on `localhost`).
+2. Join or start a game as usual, press **3D table**, then **Enter VR**.
+3. **Controllers:** point and pull the trigger. **Hands:** point and pinch, or touch a card in your hand with your fingertip.
+   - Stock: draw. Pile: take it before you draw, discard onto it after you draw (select one card first).
+   - Cards in your hand: select. The cloth in front of you: set the selected cards aside for a meld. **Lay down**: send them.
+   - A meld of yours, then cards: add those cards to it.
+4. **Recentre** puts the table in front of you again. **Leave headset view** goes back to the screen.
+
+Everyone at an online table can choose their own view: one person in a headset, the others on phones with the normal app.
+Other players' avatars act out their moves (reaching for the stock or pile, leaning in on their turn); they do not follow
+real head or hand movement yet.
+
+To try the headset against `npm run dev` on your Mac: connect the Quest by USB with developer mode on, run
+`adb reverse tcp:8787 tcp:8787`, and open `http://localhost:8787` in the Quest Browser.
+
+three.js (MIT licence) is copied into the build by `npm run build:web` and loaded through an import map in `index.html`,
+so there is still no bundler.
+
 ## Checks
 
 ```
-npm test            # 65 tests: rules engine, game room, Durable Object and Worker
+npm test            # 67 tests: rules engine, game room, Durable Object and Worker
 npm run typecheck
 ```
 
@@ -72,6 +95,8 @@ npx tsx web/e2e/passplay.e2e.ts
 npx tsx web/e2e/online.e2e.ts
 npx tsx web/e2e/phone.e2e.ts      # four emulated phones, touch only
 npx tsx web/e2e/offline.e2e.ts    # network switched off
+npx tsx web/e2e/table3d.e2e.ts    # the 3D table with a mouse, 2 and 4 players
+npm i -D iwer && npx tsx web/e2e/table3d-xr.e2e.ts   # the 3D table in an emulated Quest 3 (controller and hands)
 ```
 
 ## What has and has not been tested
