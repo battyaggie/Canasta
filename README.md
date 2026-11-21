@@ -86,10 +86,26 @@ To try the headset against `npm run dev` on your Mac: connect the Quest by USB w
 three.js (MIT licence) is copied into the build by `npm run build:web` and loaded through an import map in `index.html`,
 so there is still no bundler.
 
+## Voice chat
+
+Everyone at an online table can talk to each other, from a phone, a computer or a headset. At a **live** table voice
+starts by itself when you join: the browser asks once for the microphone, and that's it. The microphone button (lobby,
+top bar, 3D table and in the headset) mutes and unmutes you; at a take-turns table it says **Join voice chat**. A small 🎤
+next to a name means that player is in the voice chat, and the name lights up green while they talk.
+
+The sound goes straight from browser to browser (WebRTC); the game server only passes on the short setup messages
+(`voice` and `signal` in `shared/protocol.ts`) and never hears anything. The code is in `web/voice.ts`.
+
+Most home and mobile networks let browsers reach each other directly. A few (some office, school and mobile networks)
+don't; for those a TURN relay can pass the sound along. Cloudflare's TURN service is used automatically if you give the
+Worker a TURN key (Cloudflare dashboard → Realtime → TURN, create a key, then
+`npx wrangler secret put TURN_KEY_ID` and `npx wrangler secret put TURN_KEY_API_TOKEN`). Without a key the app uses
+public STUN servers only.
+
 ## Checks
 
 ```
-npm test            # 83 tests: rules engine, computer players, game room, Durable Object and Worker
+npm test            # 87 tests: rules engine, computer players, game room, Durable Object and Worker
 npm run typecheck
 ```
 
@@ -105,6 +121,7 @@ npx tsx web/e2e/offline.e2e.ts    # network switched off
 npx tsx web/e2e/table3d.e2e.ts    # the 3D table with a mouse, 2 and 4 players
 npm i -D iwer && npx tsx web/e2e/table3d-xr.e2e.ts   # the 3D table in an emulated Quest 3 (controller and hands)
 npx tsx web/e2e/vscomputer.e2e.ts # you against computer players, 2 and 4 players
+npx tsx web/e2e/voice.e2e.ts      # voice chat between 2 and 4 browsers with fake microphones
 ```
 
 ## What has and has not been tested
@@ -120,6 +137,6 @@ npx tsx web/e2e/vscomputer.e2e.ts # you against computer players, 2 and 4 player
 ## Not built yet
 
 - Phone or email alerts when it is your turn in a take-turns game (for now: keep your personal link).
-- A time limit per turn, chat, accounts, and a spectator view.
+- A time limit per turn, text chat, video, accounts, and a spectator view.
 - Computer players at online tables (for now they play only on one device: *Play against the computer*).
 - Final scores are shown but not stored beyond the table's 30-day life.
