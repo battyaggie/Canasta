@@ -138,11 +138,11 @@ export class Room {
     return this.data.game;
   }
 
-  info(connected: boolean[]): RoomInfo {
+  info(connected: boolean[], voice: boolean[] = []): RoomInfo {
     const seats: RoomInfo['seats'] = [];
     for (let i = 0; i < this.data.settings.players; i++) {
       const s = this.data.seats[i];
-      seats.push(s ? { name: s.name, connected: connected[i] === true } : null);
+      seats.push(s ? { name: s.name, connected: connected[i] === true, ...(voice[i] ? { voice: true } : {}) } : null);
     }
     return {
       code: this.data.code,
