@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { ALL_CARDS, isCanasta, isNaturalCanasta, isWild, sideOf, type MeldPlay, type PlayerView } from '../../engine/src/index.js';
 import { Person, type Look } from './people.js';
+import { handGroup } from '../cardview.js';
 import { CARD_H, CARD_W, cardBack, cardFace, disposeObject, textPanel } from './text.js';
 
 export interface TableModel {
@@ -14,6 +15,8 @@ export interface TableModel {
   /** Hand already sorted the way the 2D app shows it, without staged cards. */
   hand: number[];
   selected: ReadonlySet<number>;
+  /** Cards that came into the hand this turn (drawn or picked up), highlighted until the turn ends. */
+  fresh: ReadonlySet<number>;
   staged: readonly MeldPlay[];
   target: MeldPlay['rank'] | null;
   canAddToMelds: boolean;
@@ -513,15 +516,30 @@ export class Table3D {
     this.dynamic.add(group);
     const n = m.hand.length;
     const radius = 0.38;
-    const step = Math.min(0.075, 1.5 / Math.max(1, n));
+    // Black threes and wild cards sit a little apart from the ordinary cards (half a card's step).
+    const groups = m.hand.map(handGroup);
+    const gaps = groups.map((g, i) => (i > 0 && g !== groups[i - 1] ? 1 : 0)).reduce<number[]>((acc, x, i) => [...acc, (acc[i - 1] ?? 0) + x], []);
+    const totalGap = gaps[n - 1] ?? 0;
+    const step = Math.min(0.075, 1.5 / Math.max(1, n + totalGap * 0.6));
     const scale = 1.25;
     m.hand.forEach((id, i) => {
-      const a = (i - (n - 1) / 2) * step;
-      const lift = m.selected.has(id) ? 0.028 : 0;
+      const a = (i + gaps[i]! * 0.6 - (n - 1 + totalGap * 0.6) / 2) * step;
+      const isNew = m.fresh.has(id);
+      const lift = m.selected.has(id) ? 0.028 : isNew ? 0.016 : 0;
       const c = this.card(id, { selected: m.selected.has(id) });
       c.scale.setScalar(scale);
       c.position.set((radius + lift) * Math.sin(a), (radius + lift) * Math.cos(a) - radius, i * 0.0008);
       c.rotation.z = -a;
+      if (isNew) {
+        // A blue frame behind the card and a "new" tag above it, so a just-drawn card is easy to find.
+        const frame = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W * 1.14, CARD_H * 1.1), new THREE.MeshBasicMaterial({ color: 0x2f8fe0 }));
+        frame.position.z = -0.0004;
+        c.add(frame);
+        const tag = textPanel('new', { width: 0.04, height: 0.016, size: 0.012, bold: true, bg: '#2f8fe0' });
+        tag.position.set(-CARD_W * 0.22, CARD_H * 0.5 + 0.01, 0.0004);
+        c.add(tag);
+        this.named.set(`new:${id}`, c);
+      }
       this.addHit(c, { kind: 'card', id }, `card:${id}`, group);
     });
   }
@@ -584,7 +602,7 @@ export class Table3D {
         border: turn ? '#ffffff' : undefined,
       });
       // Above the head (which reaches about 1.48 m), turned to face the viewer every frame.
-      tag.position.set(0, 1.62, 0);
+      tag.position.set(0, 1.575, 0);
       this.billboards.push(tag);
       seatGroup.add(tag);
       // Their hand, backs towards me, held in front of the body.
@@ -602,9 +620,9 @@ export class Table3D {
         c.rotation.z = a;
         fan.add(c);
       }
-      const countTag = textPanel(`${m.seatNames[seat] ?? `Seat ${seat + 1}`} · ${count} cards`, { width: 0.26, height: 0.042, size: 0.022, bold: true });
+      const countTag = textPanel(`${m.seatNames[seat] ?? `Seat ${seat + 1}`} · ${count} cards`, { width: 0.4, height: 0.064, size: 0.034, bold: true, bg: 'rgba(255,255,255,0.95)', fg: '#111' });
       // A name badge on the chest as well, so names show even when the sign above the head is out of view.
-      countTag.position.set(0, 1.06, 0.12);
+      countTag.position.set(0, 1.07, 0.13);
       seatGroup.add(countTag);
       this.billboards.push(countTag);
     }
@@ -977,7 +995,7 @@ export class Table3D {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     // On a narrow phone-shaped window, step back a little so the whole table fits.
-    this.camera.fov = w / h < 1 ? 84 : 66;
+    this.camera.fov = w / h < 1 ? 86 : 70;
     this.camera.updateProjectionMatrix();
   }
 

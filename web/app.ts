@@ -13,7 +13,7 @@ import {
   sumPoints,
 } from '../engine/src/index.js';
 import type { ClientMsg, Mode, RoomInfo, ServerMsg } from '../shared/protocol.js';
-import { cardBack, cardEl, cardLabel, sortHand } from './cardview.js';
+import { cardBack, cardEl, cardLabel, handGroup, sortHand } from './cardview.js';
 import { h } from './dom.js';
 import { LocalTransport, clearSavedLocal, loadSavedLocal, type Status, type Transport, WsTransport } from './transport.js';
 import type { Table3D, TableActions, TableModel } from './xr/table3d.js';
@@ -38,6 +38,8 @@ let toastText: string | null = null;
 let toastTimer: number | undefined;
 
 const selected = new Set<number>();
+/** Cards that came into my hand this turn (drawn, or picked up with the pile), shown highlighted until the turn ends. */
+const fresh = new Set<number>();
 let staged: MeldPlay[] = [];
 /** A meld on the table the player has tapped: cards tapped in the hand now go straight onto it. */
 let target: MeldPlay['rank'] | null = null;
@@ -115,6 +117,7 @@ function handleMessage(msg: ServerMsg): void {
   }
   const previousSeat = you;
   const previousStatus = view?.status;
+  const previous = view;
   you = msg.you;
   room = msg.room;
   view = msg.view;
@@ -122,12 +125,27 @@ function handleMessage(msg: ServerMsg): void {
   // Not against the computer: there is only one person at the screen.
   if (isLocal && !vsComputer() && view?.status === 'playing' && (previousSeat !== you || previousStatus !== 'playing')) covered = true;
   reconcileSelection();
+  trackFresh(previous, previousSeat);
   const key = view ? `${view.handNumber}:${view.status}` : '';
   if (key !== lastOverlayKey) {
     lastOverlayKey = key;
     overlayOpen = view?.status === 'handOver' || view?.status === 'gameOver';
   }
   render();
+}
+
+/** Remember which cards just came into my hand, so the hand can point them out. */
+function trackFresh(before: PlayerView | null, seatBefore: number): void {
+  const v = view;
+  const myTurn = !!v && v.status === 'playing' && v.turn.player === you;
+  if (!v || !myTurn || !before || seatBefore !== you || before.handNumber !== v.handNumber) {
+    fresh.clear();
+    return;
+  }
+  const had = new Set(before.myHand);
+  for (const id of v.myHand) if (!had.has(id)) fresh.add(id);
+  const mine = new Set(v.myHand);
+  for (const id of fresh) if (!mine.has(id)) fresh.delete(id);
 }
 
 /** Forget selections of cards that have left my hand (e.g. after a successful meld). */
@@ -826,9 +844,11 @@ function renderGame(): HTMLElement {
       h(
         'section',
         { class: 'hand', id: 'hand', 'aria-label': 'Your hand' },
-        ...hand.map((id) =>
+        ...hand.map((id, i) =>
           cardEl(id, {
             selected: selected.has(id),
+            fresh: fresh.has(id),
+            groupStart: i > 0 && handGroup(id) !== handGroup(hand[i - 1]!),
             onClick: () => {
               if (target) return addToTarget(id);
               if (selected.has(id)) selected.delete(id);
@@ -1024,6 +1044,7 @@ function tableModel(): TableModel {
     seatOnline: info.seats.map((s) => isLocal || !!s?.connected),
     hand: sortHand(v.myHand.filter((id) => !hidden.has(id))),
     selected,
+    fresh,
     staged,
     target,
     canAddToMelds: myPlay,
