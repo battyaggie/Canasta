@@ -285,6 +285,16 @@ describe('Worker routes', () => {
     assert.ok(body.iceServers[0]!.urls.some((u) => u.startsWith('stun:')));
   });
 
+  it('tells the Quest app it belongs to this website (Digital Asset Links)', async () => {
+    const res = await call(env(), '/.well-known/assetlinks.json');
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') ?? '', /application\/json/);
+    const [link] = (await res.json()) as { relation: string[]; target: { package_name: string; sha256_cert_fingerprints: string[] } }[];
+    assert.deepEqual(link!.relation, ['delegate_permission/common.handle_all_urls']);
+    assert.equal(link!.target.package_name, 'io.github.battyaggie.canasta');
+    assert.match(link!.target.sha256_cert_fingerprints[0]!, /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+  });
+
   it('serves everything else from the static assets', async () => {
     const res = await call(env(), '/style.css');
     assert.equal(await res.text(), 'asset:/style.css');
