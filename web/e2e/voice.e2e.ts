@@ -121,6 +121,33 @@ try {
     );
   }
 
+  console.log('a browser that only asks for the microphone after a tap');
+  const eve = await player('eve');
+  const dan = await player('dan');
+  // Dan's first microphone request never answers (as when a headset holds the question back until a tap).
+  await dan.context.addInitScript(() => {
+    const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    let first = true;
+    navigator.mediaDevices.getUserMedia = (c?: MediaStreamConstraints) => {
+      if (first) {
+        first = false;
+        return new Promise(() => {});
+      }
+      return real(c);
+    };
+  });
+  await eve.page.goto(base);
+  await eve.page.fill('#name', 'Eve');
+  await eve.page.click('#create');
+  const code5 = (await eve.page.locator('#table-code').innerText()).trim();
+  await dan.page.goto(`${base}/?room=${code5}`);
+  await dan.page.fill('#name', 'Dan');
+  await dan.page.click('#join');
+  await eventually(() => dan.page.locator('#mic').innerText(), (t) => /Tap to turn on voice/.test(t), 'after a few seconds the button asks Dan to tap', 8000);
+  await dan.page.click('#mic');
+  await eventually(() => dan.page.locator('#mic').innerText(), (t) => /Mic on/.test(t), 'one tap and Dan is in the voice chat');
+  await eventually(() => debug(eve.page), connected, 'Eve hears Dan', 10000);
+
   check(errors.length === 0, `no JavaScript errors (${errors.join('; ') || 'none'})`);
   console.log('\nPASS: voice');
 } catch (e) {
