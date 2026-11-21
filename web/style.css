@@ -329,7 +329,13 @@ html.xr { font-size: 20px; }
 /* The table code, shown during online games so anyone still at the table can read it out. */
 .tag.table-code { font-size: 1rem; font-weight: 800; letter-spacing: 0.08em; padding: 3px 12px; background: rgba(240,194,75,0.25); border: 1px solid var(--accent); }
 .rejoin { border-color: var(--accent); background: rgba(240,194,75,0.14); }
-.rejoin-code { font-size: 1.6rem; letter-spacing: 0.2em; color: var(--accent); }
+.rejoin-code { letter-spacing: 0.1em; font-size: 0.9rem; }
+.saved-game + .saved-game { margin-top: 0.9rem; padding-top: 0.9rem; border-top: 1px solid rgba(255,255,255,0.15); }
+.saved-title { margin: 0 0 0.2rem; font-size: 1.15rem; }
+.saved-detail { margin: 0 0 0.6rem; }
+.home .rejoin button.continue { font-size: 1.15rem; padding: 0.8rem 1.4rem; }
+.home .rejoin button.forget { font-size: 0.85rem; opacity: 0.8; }
+.home .rejoin button.claim-seat { font-size: 1.15rem; padding: 0.8rem 1.4rem; }
 .home .rejoin button.primary { margin-top: 0; }
 
 /* "A new version is ready" during a game: small, at the top, out of the way of the cards. */

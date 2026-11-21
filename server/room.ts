@@ -73,7 +73,12 @@ export class Room {
   }
 
   /** Sit down at the table, or come back to your seat with the token you were given. */
-  join(rawName: string | undefined, token: string | undefined, figure?: Figure): { seat: number; token: string } {
+  join(
+    rawName: string | undefined,
+    token: string | undefined,
+    figure?: Figure,
+    claim?: { seat: number; connected: boolean[] },
+  ): { seat: number; token: string } {
     if (token) {
       const seat = this.data.seats.findIndex((s) => s.token === token);
       if (seat >= 0) {
@@ -83,7 +88,17 @@ export class Room {
       }
     }
     if (this.data.phase !== 'lobby') {
-      throw new RoomError('This game has already started. Use your personal link on the device you first joined from.');
+      // A started game, and this device does not know its seat (another device, or its memory was
+      // wiped). With the table code you may take back a seat whose player is not at the table now.
+      // This is a family game: the 4-character code is the only key, as it is for joining.
+      if (claim) {
+        const s = this.data.seats[claim.seat];
+        if (!s) throw new RoomError('There is no such player at this table.');
+        if (claim.connected[claim.seat]) throw new RoomError(`${s.name} is at the table right now on another device.`);
+        if (figure) s.figure = figure;
+        return { seat: claim.seat, token: s.token };
+      }
+      throw new RoomError('This game has already started. Choose which player you are.');
     }
     if (this.data.seats.length >= this.data.settings.players) throw new RoomError('This table is full.');
     const seat = this.data.seats.length;

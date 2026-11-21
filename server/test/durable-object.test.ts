@@ -36,7 +36,15 @@ describe('GameRoom (Durable Object)', () => {
     assert.equal((await init(room)).status, 200);
     assert.equal((await init(room)).status, 409, 'cannot init twice');
     const info = (await (await room.fetch(new Request('https://room/info'))).json()) as Record<string, unknown>;
-    assert.deepEqual(info, { settings: { players: 2, mode: 'live', targetScore: 5000 }, phase: 'lobby', seatsTaken: 0 });
+    assert.deepEqual(info, {
+      settings: { players: 2, mode: 'live', targetScore: 5000 },
+      phase: 'lobby',
+      seatsTaken: 0,
+      seats: [],
+      scores: null,
+      handNumber: null,
+      lastMoveAt: null,
+    });
   });
 
   it('seats players, hands out private tokens, and shows presence', async () => {
@@ -104,6 +112,41 @@ describe('GameRoom (Durable Object)', () => {
     await say(room, mover, { t: 'action', action: { type: 'drawStock' } });
     assert.equal(mover.last('update').view!.myHand.length, 16);
     assert.equal(other.last('update').view!.handSizes[turn], 16, 'the other player sees only the count');
+  });
+
+  it('keeps an unfinished game after everyone leaves, describes it, and lets a player on a new device sit back down', async () => {
+    const { room, state } = newRoom();
+    await init(room);
+    const a = await sit(room, state, 'Mark');
+    const b = await sit(room, state, 'Mum');
+    await say(room, a, { t: 'start' });
+    const mumHand = b.last('update').view!.myHand;
+    a.close();
+    b.close();
+    await room.webSocketClose(a as never);
+    await room.webSocketClose(b as never);
+
+    // Days later the object wakes up fresh from storage.
+    const later = new GameRoom(state as unknown as AnyRoom, {} as never);
+    const info = (await (await later.fetch(new Request('https://room/info'))).json()) as Record<string, any>;
+    assert.equal(info.phase, 'playing');
+    assert.deepEqual(info.seats, [{ name: 'Mark', connected: false }, { name: 'Mum', connected: false }]);
+    assert.deepEqual(info.scores, [0, 0]);
+    assert.equal(info.handNumber, 1);
+    assert.ok(!JSON.stringify(info).includes(b.last('welcome').token), 'no secret tokens in the summary');
+
+    // Mum's phone forgot everything: with the table code she says "I am Mum".
+    const phone = new FakeWS();
+    state.acceptWebSocket(phone);
+    await say(later, phone, { t: 'hello', seat: 1 });
+    assert.equal(phone.last('welcome').seat, 1);
+    assert.deepEqual(phone.last('update').view!.myHand, mumHand, 'her own cards are waiting for her');
+
+    // Nobody else can take her seat while she is there.
+    const other = new FakeWS();
+    state.acceptWebSocket(other);
+    await say(later, other, { t: 'hello', seat: 1 });
+    assert.match(other.last('error').message, /at the table right now/);
   });
 
   it('survives eviction: a fresh object reloads the game from storage', async () => {

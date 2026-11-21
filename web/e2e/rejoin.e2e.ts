@@ -57,10 +57,55 @@ try {
   check(handAgain === hand, 'Mark is back in his own seat with the same cards');
   await eventually(() => mum.page.locator('.chip:not(.me) .dot.on').count(), (n) => n === 1, 'Mum sees Mark back online');
 
-  // "Forget it" removes the offer.
-  await again.goto(base);
-  await again.locator('#forget-last').click();
-  check((await again.locator('#rejoin').count()) === 0, '"Forget it" removes the offer');
+  // ------------------------------------------------ both leave; days later both come back
+  console.log('both players leave the unfinished game');
+  await again.close();
+  await mum.page.close();
+  await eventually(async () => sim.rooms.get(code)!.state.getWebSockets().length, (n) => n === 0, 'nobody is left at the table');
+
+  // A second, newer table on Mark's device: both games are offered, newest first.
+  const m2 = await mark.context.newPage();
+  watchErrors(m2, 'mark later', errors);
+  await m2.goto(base);
+  await m2.click('#create');
+  const code2 = (await m2.locator('#table-code').innerText()).trim();
+  await m2.goto(base);
+  await eventually(() => m2.locator('.saved-game').count(), (n) => n === 2, 'Mark sees both of his unfinished games');
+  await eventually(
+    () => m2.locator(`.saved-game[data-code="${code}"]`).innerText(),
+    (t) => /Your game with Mum/.test(t) && /Hand 1/.test(t) && /You 0, Mum 0/.test(t) && /last played/.test(t),
+    'the game with Mum is described with names, hand and score',
+  );
+  check((await m2.locator('.saved-game').first().getAttribute('data-code')) === code2, 'the newest table comes first');
+  await m2.screenshot({ path: `${SHOTS}/saved-games-home.png` });
+  await m2.locator(`.saved-game[data-code="${code}"] .continue`).click();
+  await m2.locator('#hand .card').first().waitFor();
+  const handLater = await m2.locator('#hand .card').evaluateAll((els: Element[]) => els.map((e) => e.getAttribute('aria-label')).join());
+  check(handLater === hand, 'Mark picks the game up again with the same cards');
+
+  // Mum's phone has forgotten everything (new phone, or the browser cleared its memory).
+  console.log("Mum's phone forgot the game");
+  const mumNew = await player('mum new phone');
+  await mumNew.page.goto(base);
+  check((await mumNew.page.locator('#rejoin-panel').count()) === 0, 'a wiped phone has no saved games');
+  await mumNew.page.fill('#code', code);
+  await mumNew.page.click('#join');
+  await mumNew.page.locator('#claim-panel').waitFor();
+  check(await mumNew.page.locator('.claim-seat', { hasText: 'Mark' }).isDisabled(), 'Mark is at the table, so his seat cannot be taken');
+  await mumNew.page.screenshot({ path: `${SHOTS}/which-player.png` });
+  await mumNew.page.locator('.claim-seat', { hasText: 'Mum' }).click();
+  await mumNew.page.locator('#hand .card').first().waitFor();
+  check((await mumNew.page.locator('.chip.me').innerText()).includes('Mum'), 'Mum is back in her own seat');
+  await eventually(() => m2.locator('.chip:not(.me) .dot.on').count(), (n) => n === 1, 'Mark sees Mum back online');
+  // From now on her phone remembers the game again.
+  await mumNew.page.goto(base);
+  await eventually(() => mumNew.page.locator('.saved-game').innerText(), (t) => /Your game with Mark/.test(t), "Mum's phone offers the game again");
+
+  // "Remove from list" removes the offer.
+  await m2.goto(base);
+  await eventually(() => m2.locator('.saved-game').count(), (n) => n === 2, 'both games listed');
+  await m2.locator(`.saved-game[data-code="${code2}"] .forget`).click();
+  check((await m2.locator('.saved-game').count()) === 1, '"Remove from list" removes that game only');
 
   check(errors.length === 0, `no JavaScript errors (${errors.join('; ') || 'none'})`);
   console.log('\nPASS: rejoin');

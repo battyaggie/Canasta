@@ -20,6 +20,7 @@ import {
   ProtocolError,
   parseClientMsg,
   parseSettings,
+  type RoomSummary,
 } from '../shared/protocol.js';
 import { Room, RoomError, type RoomData } from './room.js';
 
@@ -147,7 +148,9 @@ async function iceServers(env: Env): Promise<unknown[]> {
 
 // ---- the Durable Object: one table -------------------------------------------
 
-const KEEP_ROOM_MS = 30 * 24 * 60 * 60 * 1000; // delete a room 30 days after its last activity
+// A table, finished or not, is kept for 90 days after anyone last did anything there, so an
+// unfinished game can be picked up weeks later. (Free-plan storage: a table is a few kilobytes.)
+const KEEP_ROOM_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_SOCKETS = 12;
 
 export class GameRoom {
@@ -187,11 +190,18 @@ export class GameRoom {
     if (!room) return json({ error: 'No such room' }, 404);
 
     if (url.pathname === '/info') {
-      return json({
+      const connected = this.connectedSeats();
+      const g = room.data.game;
+      const summary: RoomSummary = {
         settings: room.data.settings,
         phase: room.data.phase,
         seatsTaken: room.data.seats.length,
-      });
+        seats: room.data.seats.map((s, i) => ({ name: s.name, connected: connected[i] === true })),
+        scores: g ? [g.scores[0], g.scores[1]] : null,
+        handNumber: g ? g.handNumber : null,
+        lastMoveAt: room.data.lastMoveAt,
+      };
+      return json(summary);
     }
 
     if (url.pathname === '/ws' && request.headers.get('Upgrade') === 'websocket') {
@@ -235,7 +245,7 @@ export class GameRoom {
     if (room) this.broadcast(room, ws);
   }
 
-  /** Runs 30 days after the last activity: forget the room. */
+  /** Runs 90 days after the last activity: forget the room. */
   async alarm(): Promise<void> {
     if (this.state.getWebSockets().length === 0) {
       this.room = null;
@@ -248,7 +258,8 @@ export class GameRoom {
   /** 'save': the saved room data changed; 'broadcast': only who-is-here changed; 'none': nothing to tell everyone. */
   private handle(room: Room, ws: WS, msg: ClientMsg): 'save' | 'broadcast' | 'none' {
     if (msg.t === 'hello') {
-      const { seat, token } = room.join(msg.name, msg.token, msg.figure);
+      const claim = msg.seat !== undefined ? { seat: msg.seat, connected: this.connectedSeats(ws) } : undefined;
+      const { seat, token } = room.join(msg.name, msg.token, msg.figure, claim);
       ws.serializeAttachment({ seat, voice: false });
       this.send(ws, { t: 'welcome', seat, token });
       return 'save'; // a new player may have taken a seat
@@ -282,6 +293,16 @@ export class GameRoom {
         return 'none';
       }
     }
+  }
+
+  /** Which seats have someone at the table right now (not counting `except`). */
+  private connectedSeats(except?: WS): boolean[] {
+    const connected: boolean[] = [];
+    for (const s of this.state.getWebSockets()) {
+      const seat = s === except ? null : this.seatOf(s);
+      if (seat !== null) connected[seat] = true;
+    }
+    return connected;
   }
 
   private seatOf(ws: WS): number | null {

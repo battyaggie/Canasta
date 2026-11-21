@@ -12,7 +12,7 @@ import {
   sideOf,
   sumPoints,
 } from '../engine/src/index.js';
-import type { ClientMsg, Figure, Mode, RoomInfo, ServerMsg } from '../shared/protocol.js';
+import type { ClientMsg, Figure, Mode, RoomInfo, RoomSummary, ServerMsg } from '../shared/protocol.js';
 import { cardBack, cardEl, cardLabel, handGroup, sortHand } from './cardview.js';
 import { h } from './dom.js';
 import { LocalTransport, clearSavedLocal, loadSavedLocal, type Status, type Transport, WsTransport } from './transport.js';
@@ -77,6 +77,8 @@ const form = {
   botLevel: 'normal' as 'easy' | 'normal',
   joinCode: '',
   error: '',
+  /** A started game this device has no seat at: "Which player are you?" */
+  claim: null as { code: string; seats: { name: string; connected: boolean }[] } | null,
 };
 
 function safeGet(key: string): string | null {
@@ -99,6 +101,96 @@ function safeSet(key: string, value: string): void {
   } catch {
     /* private mode etc. */
   }
+}
+
+// ------------------------------------------------------------------ saved online games
+//
+// The server keeps every table, with its cards and scores, for 90 days after the last move, even
+// when nobody is connected. This device remembers which tables it sits at (and its secret seat token
+// for each), so the start page can offer "Continue" for each unfinished game: no code to type.
+
+const MAX_SAVED = 6;
+
+/** Tables this device has a seat at, most recently played first. */
+function savedTables(): string[] {
+  let list: string[] = [];
+  try {
+    const raw: unknown = JSON.parse(safeGet('canasta.rooms') ?? '[]');
+    if (Array.isArray(raw)) list = raw.filter((c): c is string => typeof c === 'string' && /^[A-Z0-9]{4}$/.test(c));
+  } catch {
+    /* unreadable: start a fresh list */
+  }
+  const last = safeGet('canasta.lastRoom'); // remembered by earlier versions of the app
+  if (last && !list.includes(last)) list.unshift(last);
+  return list.filter((c) => safeGet(`canasta.token.${c}`));
+}
+
+function rememberTable(code: string): void {
+  safeSet('canasta.rooms', JSON.stringify([code, ...savedTables().filter((c) => c !== code)].slice(0, MAX_SAVED)));
+  safeSet('canasta.lastRoom', code);
+}
+
+function forgetTable(code: string): void {
+  safeSet('canasta.rooms', JSON.stringify(savedTables().filter((c) => c !== code)));
+  if (safeGet('canasta.lastRoom') === code) safeRemove('canasta.lastRoom');
+  summaries.delete(code);
+}
+
+/** What the server says about each saved table; 'loading' while we ask. Asked afresh each time the start page opens. */
+const summaries = new Map<string, RoomSummary | 'loading' | 'offline'>();
+
+function loadSummary(code: string): void {
+  if (summaries.has(code)) return;
+  summaries.set(code, 'loading');
+  fetch(`/api/room/${code}`)
+    .then(async (res) => {
+      if (res.status === 404) return forgetTable(code); // the table has been tidied away
+      if (!res.ok) throw new Error(String(res.status));
+      const sum = (await res.json()) as RoomSummary;
+      if (sum.phase === 'finished') return forgetTable(code); // played to the end: nothing to continue
+      summaries.set(code, sum);
+    })
+    .catch(() => summaries.set(code, 'offline'))
+    .finally(() => !transport && render());
+}
+
+function ago(ms: number): string {
+  const min = Math.round((Date.now() - ms) / 60_000);
+  if (min < 2) return 'just now';
+  if (min < 60) return `${min} minutes ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 24) return hours === 1 ? 'an hour ago' : `${hours} hours ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days} days ago`;
+}
+
+const listNames = (names: string[]): string =>
+  names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+/** "Your game with Mum" and "Hand 3 · You 2,340, Mum 1,980 · last played 2 days ago". */
+function describeSaved(code: string, sum: RoomSummary | 'loading' | 'offline' | undefined): { title: string; detail: string } {
+  if (!sum || sum === 'loading') return { title: `Table ${code}`, detail: 'Looking up the game…' };
+  if (sum === 'offline') return { title: `Table ${code}`, detail: 'Could not reach the server just now.' };
+  const mine = Number(safeGet(`canasta.seat.${code}`));
+  const known = Number.isInteger(mine) && safeGet(`canasta.seat.${code}`) !== null && mine < sum.seats.length;
+  const others = sum.seats.filter((_, i) => !known || i !== mine).map((s) => s.name);
+  const title = known && others.length ? `Your game with ${listNames(others)}` : `Table ${code}`;
+  const bits: string[] = [];
+  if (sum.phase === 'lobby') bits.push('Not started yet');
+  else if (sum.scores) {
+    const fmt = (n: number) => n.toLocaleString('en');
+    if (sum.settings.players === 2 && known) {
+      const me = mine % 2;
+      bits.push(`Hand ${sum.handNumber}`, `You ${fmt(sum.scores[me as 0 | 1])}, ${others[0]} ${fmt(sum.scores[(1 - me) as 0 | 1])}`);
+    } else if (known) {
+      const me = mine % 2;
+      bits.push(`Hand ${sum.handNumber}`, `Your side ${fmt(sum.scores[me as 0 | 1])}, the others ${fmt(sum.scores[(1 - me) as 0 | 1])}`);
+    } else bits.push(`Hand ${sum.handNumber}`, `${fmt(sum.scores[0])} to ${fmt(sum.scores[1])}`);
+  }
+  if (sum.lastMoveAt) bits.push(`last played ${ago(sum.lastMoveAt)}`);
+  const here = sum.seats.filter((s, i) => s.connected && (!known || i !== mine)).map((s) => s.name);
+  if (here.length) bits.push(`${listNames(here)} ${here.length === 1 ? 'is' : 'are'} at the table now`);
+  return { title, detail: bits.join(' · ') };
 }
 
 // ------------------------------------------------------------------ connection
@@ -130,7 +222,10 @@ function resetGameState(): void {
 function handleMessage(msg: ServerMsg): void {
   if (msg.t === 'welcome') {
     joined = true;
-    if (!isLocal) safeSet(`canasta.token.${roomCode}`, msg.token);
+    if (!isLocal) {
+      safeSet(`canasta.token.${roomCode}`, msg.token);
+      safeSet(`canasta.seat.${roomCode}`, String(msg.seat));
+    }
     voice?.rejoined();
     return;
   }
@@ -214,18 +309,32 @@ function openTransport(
   });
 }
 
-async function joinOnline(code: string, name: string, tokenFromLink?: string): Promise<void> {
+/** `claimSeat`: this device has no seat token for a started game, and the person said which player they are. */
+async function joinOnline(code: string, name: string, tokenFromLink?: string, claimSeat?: number): Promise<void> {
   code = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{4}$/.test(code)) {
     form.error = 'Table codes have 4 letters or digits.';
     return render();
   }
   form.error = '';
+  form.claim = null;
   try {
     const res = await fetch(`/api/room/${code}`);
     if (res.status === 404) {
-      if (safeGet('canasta.lastRoom') === code) safeRemove('canasta.lastRoom');
+      forgetTable(code);
       form.error = `There is no table with the code ${code}.`;
+      return render();
+    }
+    const sum = (await res.json()) as Partial<RoomSummary>;
+    // A game that has already started, on a device that does not know its seat (a new phone, the
+    // headset instead of the computer, or the browser forgot): ask which player this is.
+    if (sum.phase !== 'lobby' && Array.isArray(sum.seats) && !tokenFromLink && !safeGet(`canasta.token.${code}`) && claimSeat === undefined) {
+      form.claim = { code, seats: sum.seats };
+      return render();
+    }
+    // Sitting down at a table that has not started yet: the others need to know who you are.
+    if (sum.phase === 'lobby' && !name && !tokenFromLink && !safeGet(`canasta.token.${code}`)) {
+      form.error = 'Please enter your name first.';
       return render();
     }
   } catch {
@@ -235,15 +344,21 @@ async function joinOnline(code: string, name: string, tokenFromLink?: string): P
   isLocal = false;
   roomCode = code;
   if (tokenFromLink) safeSet(`canasta.token.${code}`, tokenFromLink);
-  // Remembered so the start page can offer "Rejoin your game" if the page is closed by mistake.
-  safeSet('canasta.lastRoom', code);
+  // Remembered so the start page can offer "Continue" for this game, days later.
+  rememberTable(code);
   history.replaceState(null, '', `?room=${code}`);
   if (name) safeSet('canasta.name', name);
   openTransport(
     (events) =>
       new WsTransport(code, events, () => {
         const token = safeGet(`canasta.token.${code}`) ?? undefined;
-        return { t: 'hello', token, name: name || safeGet('canasta.name') || undefined, ...(form.figure ? { figure: form.figure } : {}) };
+        return {
+          t: 'hello',
+          token,
+          name: name || safeGet('canasta.name') || undefined,
+          ...(form.figure ? { figure: form.figure } : {}),
+          ...(!token && claimSeat !== undefined ? { seat: claimSeat } : {}),
+        };
       }),
   );
   voice = new Voice(send, render, showSpeaking);
@@ -297,6 +412,7 @@ function leave(): void {
   resetGameState();
   isLocal = false;
   roomCode = '';
+  summaries.clear(); // look up the saved games afresh: scores have moved on
   history.replaceState(null, '', location.pathname);
   render();
 }
@@ -530,21 +646,57 @@ function renderHome(): HTMLElement {
     h('p', { class: 'tagline' }, 'Play with friends and family, online or around one device.'),
     form.error ? h('p', { class: 'form-error', role: 'alert' }, form.error) : null,
 
-    // Closed the page by mistake? This device still holds its seat at the last online table.
+    // "Which player are you?" for a started game this device has no seat at.
+    form.claim
+      ? h(
+          'section',
+          { class: 'panel rejoin', id: 'claim-panel' },
+          h('h2', {}, `Table ${form.claim.code}: which player are you?`),
+          h('p', { class: 'muted' }, 'This game has already started. Tap your name to sit back down in your seat with your cards.'),
+          h(
+            'div',
+            { class: 'row buttons' },
+            ...form.claim.seats.map((seat, i) =>
+              h(
+                'button',
+                {
+                  class: seat.connected ? 'claim-seat' : 'primary claim-seat',
+                  disabled: seat.connected,
+                  onclick: () => void joinOnline(form.claim!.code, form.name.trim(), undefined, i),
+                },
+                seat.connected ? `${seat.name} (playing now)` : seat.name,
+              ),
+            ),
+            h('button', { id: 'claim-cancel', onclick: () => ((form.claim = null), render()) }, 'Cancel'),
+          ),
+        )
+      : null,
+
+    // Unfinished online games this device sits at: one tap to carry on, days or weeks later.
     (() => {
-      const last = safeGet('canasta.lastRoom');
-      if (linkCode || !last || !safeGet(`canasta.token.${last}`)) return null;
+      const tables = linkCode || form.claim ? [] : savedTables();
+      tables.forEach(loadSummary);
+      const shown = tables.filter((c) => summaries.has(c)); // finished or vanished tables drop out of the list
+      if (!shown.length) return null;
       return h(
         'section',
         { class: 'panel rejoin', id: 'rejoin-panel' },
-        h('h2', {}, 'Your online game'),
-        h('p', {}, 'Table ', h('strong', { class: 'rejoin-code' }, last)),
-        h(
-          'div',
-          { class: 'row buttons' },
-          h('button', { id: 'rejoin', class: 'primary', onclick: () => void joinOnline(last, form.name.trim()) }, 'Rejoin your game'),
-          h('button', { id: 'forget-last', onclick: () => (safeRemove('canasta.lastRoom'), render()) }, 'Forget it'),
-        ),
+        h('h2', {}, shown.length === 1 ? 'Your unfinished game' : 'Your unfinished games'),
+        ...shown.map((code, i) => {
+          const d = describeSaved(code, summaries.get(code));
+          return h(
+            'div',
+            { class: 'saved-game', 'data-code': code },
+            h('p', { class: 'saved-title' }, h('strong', {}, d.title), d.title.includes(code) ? null : h('span', { class: 'rejoin-code muted' }, ` (table ${code})`)),
+            h('p', { class: 'muted saved-detail' }, d.detail),
+            h(
+              'div',
+              { class: 'row buttons' },
+              h('button', { ...(i === 0 ? { id: 'rejoin' } : {}), class: 'primary continue', onclick: () => void joinOnline(code, form.name.trim()) }, 'Continue this game'),
+              h('button', { ...(i === 0 ? { id: 'forget-last' } : {}), class: 'forget', onclick: () => (forgetTable(code), render()) }, 'Remove from list'),
+            ),
+          );
+        }),
       );
     })(),
 
@@ -614,10 +766,6 @@ function renderHome(): HTMLElement {
           class: 'primary',
           id: 'join',
           onclick: () => {
-            if (!form.name.trim() && !safeGet(`canasta.token.${form.joinCode}`) && !personal) {
-              form.error = 'Please enter your name first.';
-              return render();
-            }
             void joinOnline(form.joinCode, form.name.trim(), personal ?? undefined);
           },
         },
@@ -767,7 +915,7 @@ function renderLobby(): HTMLElement {
         ? h(
             'p',
             { class: 'muted' },
-            'Take-turns game: the table stays open for 30 days. Come back any time with your personal link (below) and play when it is your turn. Phone or email alerts are not built yet.',
+            'Take-turns game: the table stays open for 90 days. Come back any time with your personal link (below) and play when it is your turn. Phone or email alerts are not built yet.',
           )
         : null,
       h(
