@@ -74,10 +74,27 @@ function newCode(): string {
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+// The Quest app's package name and the SHA-256 fingerprint of its signing certificate (public information).
+export const QUEST_APP_PACKAGE = 'io.github.battyaggie.canasta';
+export const ASSET_LINKS = [
+  {
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: {
+      namespace: 'android_app',
+      package_name: QUEST_APP_PACKAGE,
+      sha256_cert_fingerprints: ['B5:5D:E4:3A:81:A2:FF:F8:7B:CA:C1:35:00:D0:F1:1B:75:0F:13:73:8D:0B:C3:0F:B6:8E:91:FF:0F:CB:50:10'],
+    },
+  },
+];
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Proves to the Meta Quest app (the store version) that it belongs to this website, so it opens
+    // full screen without a browser address bar. The fingerprint is the app's public signing certificate.
+    if (path === '/.well-known/assetlinks.json') return json(ASSET_LINKS);
 
     if (path === '/api/create' && request.method === 'POST') {
       let settings;
