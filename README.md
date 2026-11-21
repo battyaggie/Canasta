@@ -105,7 +105,7 @@ public STUN servers only.
 ## Checks
 
 ```
-npm test            # 85 tests: rules engine, computer players, game room, Durable Object and Worker
+npm test            # 87 tests: rules engine, computer players, game room, Durable Object and Worker
 npm run typecheck
 ```
 
