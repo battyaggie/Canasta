@@ -66,15 +66,51 @@ const PILE_X = 0.12;
 const MELD_GAP = 0.135;
 const LIFT = 0.0006; // keeps stacked flat cards from flickering into each other
 
-const SEAT_COLORS = [0x3d7bd9, 0xd96a3d, 0x47a86b, 0xa04fc9];
 
 interface AvatarParts {
   root: THREE.Group;
   body: THREE.Group;
-  head: THREE.Mesh;
+  head: THREE.Group;
   left: THREE.Mesh;
   right: THREE.Mesh;
+  /** Upper arm and forearm, left then right; re-aimed every frame from shoulder to hand. */
+  arms: [THREE.Mesh, THREE.Mesh, THREE.Mesh, THREE.Mesh];
+  elbows: [THREE.Mesh, THREE.Mesh];
+  eyes: THREE.Mesh[];
+  mouth: THREE.Mesh;
+  nextBlink: number;
   reach: { to: THREE.Vector3; start: number } | null;
+}
+
+/** A look for each seat: shirt, skin and hair, so the players are easy to tell apart. */
+const LOOKS = [
+  { shirt: 0x3d7bd9, skin: 0xf1c9a5, hair: 0x5a3a22, long: false },
+  { shirt: 0xc8553d, skin: 0xe0ac85, hair: 0xb8b8b8, long: true },
+  { shirt: 0x47a86b, skin: 0xc68d63, hair: 0x1f1a17, long: false },
+  { shirt: 0x8e4fc9, skin: 0xf3d2b8, hair: 0xc9963f, long: true },
+];
+const SHOULDER_L = new THREE.Vector3(-0.19, 1.12, 0.02);
+const SHOULDER_R = new THREE.Vector3(0.19, 1.12, 0.02);
+const HAND_L = new THREE.Vector3(-0.13, 0.88, 0.27);
+const HAND_R = new THREE.Vector3(0.13, 0.88, 0.27);
+const UP = new THREE.Vector3(0, 1, 0);
+
+/** Stretch a unit-height cylinder between two points. */
+function aimLimb(limb: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3): void {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  limb.position.copy(a).addScaledVector(dir, 0.5);
+  limb.scale.set(1, Math.max(0.001, dir.length()), 1);
+  limb.quaternion.setFromUnitVectors(UP, dir.normalize());
+}
+
+/** A simple elbow: halfway between shoulder and hand, dropped down and out a little. */
+function elbowFor(shoulder: THREE.Vector3, hand: THREE.Vector3): THREE.Vector3 {
+  const e = new THREE.Vector3().lerpVectors(shoulder, hand, 0.5);
+  const reach = shoulder.distanceTo(hand);
+  const bend = Math.max(0, 0.42 - reach) * 0.6 + 0.02;
+  e.y -= bend;
+  e.x += Math.sign(shoulder.x) * bend * 0.8;
+  return e;
 }
 
 export async function xrSupport(): Promise<{ vr: boolean; ar: boolean }> {
@@ -497,7 +533,7 @@ export class Table3D {
       keep.add(seat);
       let av = this.avatars.get(seat);
       if (!av) {
-        av = this.makeAvatar(SEAT_COLORS[seat % SEAT_COLORS.length]!);
+        av = this.makeAvatar(LOOKS[seat % LOOKS.length]!);
         this.avatars.set(seat, av);
         this.tableRoot.add(av.root);
       }
@@ -557,33 +593,116 @@ export class Table3D {
     }
   }
 
-  private makeAvatar(color: number): AvatarParts {
+  private makeAvatar(look: (typeof LOOKS)[number]): AvatarParts {
     const root = new THREE.Group();
     const body = new THREE.Group();
     root.add(body);
-    const part = (geo: THREE.BufferGeometry, c: number) => {
-      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: c, roughness: 0.7 }));
+    const mat = (c: number, roughness = 0.75) => new THREE.MeshStandardMaterial({ color: c, roughness });
+    const part = (geo: THREE.BufferGeometry, m: THREE.Material, parent: THREE.Object3D = body) => {
+      const mesh = new THREE.Mesh(geo, m);
       mesh.userData.avatarPart = true;
+      parent.add(mesh);
       return mesh;
     };
-    const torso = part(new THREE.CapsuleGeometry(0.15, 0.3, 6, 16), color);
-    torso.position.y = 0.93;
-    const head = part(new THREE.SphereGeometry(0.1, 24, 16), 0xe8c4a0);
-    head.position.y = 1.3;
-    const nose = part(new THREE.SphereGeometry(0.018, 10, 8), 0xd9a882);
-    nose.position.set(0, 0, 0.1);
-    head.add(nose);
-    const left = part(new THREE.SphereGeometry(0.04, 16, 12), 0xe8c4a0);
-    const right = part(new THREE.SphereGeometry(0.04, 16, 12), 0xe8c4a0);
-    left.position.set(-0.13, 0.86, 0.26);
-    right.position.set(0.13, 0.86, 0.26);
-    const chair = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.05, 0.45), new THREE.MeshStandardMaterial({ color: 0x5a3a22 }));
-    chair.position.set(0, 0.45, -0.05);
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.55, 0.04), chair.material);
+    const skin = mat(look.skin, 0.6);
+    const shirt = mat(look.shirt, 0.85);
+    const hair = mat(look.hair, 0.9);
+    const trousers = mat(0x2d3340, 0.9);
+
+    // Body: a torso that is wider at the shoulders, rounded shoulders, a neck, and legs under the table.
+    const torso = part(new THREE.CylinderGeometry(0.17, 0.14, 0.46, 24), shirt);
+    torso.position.y = 0.9;
+    torso.scale.z = 0.62;
+    const chest = part(new THREE.SphereGeometry(0.17, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), shirt);
+    chest.position.y = 1.12;
+    chest.scale.set(1.12, 0.35, 0.62);
+    for (const x of [-0.19, 0.19]) {
+      const shoulder = part(new THREE.SphereGeometry(0.055, 16, 12), shirt);
+      shoulder.position.set(x, 1.11, 0.02);
+    }
+    const neck = part(new THREE.CylinderGeometry(0.045, 0.05, 0.1, 16), skin);
+    neck.position.y = 1.2;
+    for (const x of [-0.09, 0.09]) {
+      const thigh = part(new THREE.CylinderGeometry(0.06, 0.06, 0.4, 12), trousers, root);
+      thigh.rotation.x = Math.PI / 2;
+      thigh.position.set(x, 0.55, 0.15);
+      const shin = part(new THREE.CylinderGeometry(0.05, 0.05, 0.45, 12), trousers, root);
+      shin.position.set(x, 0.3, 0.34);
+    }
+
+    // Head: slightly taller than wide, with ears, nose, eyes, eyebrows, mouth and hair.
+    const head = new THREE.Group();
+    head.position.y = 1.36;
+    body.add(head);
+    const skull = part(new THREE.SphereGeometry(0.1, 32, 24), skin, head);
+    skull.scale.set(0.92, 1.1, 1);
+    for (const x of [-0.093, 0.093]) {
+      const ear = part(new THREE.SphereGeometry(0.022, 12, 8), skin, head);
+      ear.position.set(x, 0, 0);
+      ear.scale.set(0.5, 1, 0.8);
+    }
+    const nose = part(new THREE.ConeGeometry(0.016, 0.04, 12), skin, head);
+    nose.position.set(0, -0.005, 0.1);
+    nose.rotation.x = Math.PI / 2;
+    const white = mat(0xffffff, 0.3);
+    const iris = mat(0x3b2a20, 0.3);
+    const eyes: THREE.Mesh[] = [];
+    for (const x of [-0.035, 0.035]) {
+      const eye = part(new THREE.SphereGeometry(0.016, 16, 12), white, head);
+      eye.position.set(x, 0.02, 0.083);
+      const pupil = part(new THREE.SphereGeometry(0.008, 12, 8), iris, eye);
+      pupil.position.z = 0.012;
+      eyes.push(eye);
+      const brow = part(new THREE.BoxGeometry(0.036, 0.007, 0.01), hair, head);
+      brow.position.set(x, 0.048, 0.093);
+      brow.rotation.z = x < 0 ? 0.12 : -0.12;
+    }
+    const mouth = part(new THREE.BoxGeometry(0.04, 0.008, 0.01), mat(0x9c4a4a, 0.5), head);
+    mouth.position.set(0, -0.045, 0.092);
+    // Hair: a cap over the top and back of the head; longer hair falls to the shoulders.
+    const cap = part(new THREE.SphereGeometry(0.106, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.55), hair, head);
+    cap.scale.set(0.95, 1.12, 1.04);
+    cap.rotation.x = -0.35;
+    cap.position.set(0, 0.008, -0.008);
+    if (look.long) {
+      const back = part(new THREE.CylinderGeometry(0.1, 0.11, 0.18, 24, 1, true, Math.PI * 0.6, Math.PI * 0.8), hair, head);
+      back.position.set(0, -0.07, -0.01);
+      (back.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+    }
+
+    // Arms: upper arm and forearm, re-aimed every frame so the hands can reach across the table.
+    const limb = (r: number) => part(new THREE.CylinderGeometry(r, r, 1, 12), shirt);
+    const arms: [THREE.Mesh, THREE.Mesh, THREE.Mesh, THREE.Mesh] = [limb(0.042), limb(0.036), limb(0.042), limb(0.036)];
+    const elbows: [THREE.Mesh, THREE.Mesh] = [part(new THREE.SphereGeometry(0.04, 12, 8), shirt), part(new THREE.SphereGeometry(0.04, 12, 8), shirt)];
+    const left = part(new THREE.SphereGeometry(0.038, 16, 12), skin);
+    const right = part(new THREE.SphereGeometry(0.038, 16, 12), skin);
+    left.scale.set(0.8, 0.6, 1.2);
+    right.scale.set(0.8, 0.6, 1.2);
+    left.position.copy(HAND_L);
+    right.position.copy(HAND_R);
+
+    const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a22 });
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.05, 0.45), wood);
+    seat.position.set(0, 0.45, -0.05);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.55, 0.04), wood);
     back.position.set(0, 0.72, -0.27);
-    body.add(torso, head, left, right);
-    root.add(chair, back);
-    return { root, body, head, left, right, reach: null };
+    root.add(seat, back);
+    const av: AvatarParts = { root, body, head, left, right, arms, elbows, eyes, mouth, nextBlink: Math.random() * 4, reach: null };
+    this.poseArms(av);
+    return av;
+  }
+
+  private poseArms(av: AvatarParts): void {
+    const pairs: [THREE.Vector3, THREE.Mesh, number][] = [
+      [SHOULDER_L, av.left, 0],
+      [SHOULDER_R, av.right, 1],
+    ];
+    for (const [shoulder, hand, i] of pairs) {
+      const elbow = elbowFor(shoulder, hand.position);
+      aimLimb(av.arms[i * 2]!, shoulder, elbow);
+      aimLimb(av.arms[i * 2 + 1]!, elbow, hand.position);
+      av.elbows[i]!.position.copy(elbow);
+    }
   }
 
   /** Phones send no movements, so avatars act out the moves the game reports: drawing, discarding, taking the pile. */
@@ -614,17 +733,18 @@ export class Table3D {
       av.body.position.y = Math.sin(t * 1.3 + seat) * 0.006;
       av.head.rotation.x = turn ? 0.35 : 0.1 + Math.sin(t * 0.5 + seat) * 0.05;
       av.head.rotation.y = Math.sin(t * 0.37 + seat * 2) * 0.25;
-      const rest = new THREE.Vector3(0.13, 0.86, 0.26);
+      // Blink every few seconds; the mouth moves a little, as if chatting.
+      const blinking = t > av.nextBlink && t < av.nextBlink + 0.12;
+      if (t > av.nextBlink + 0.12) av.nextBlink = t + 2.5 + Math.random() * 3;
+      for (const eye of av.eyes) eye.scale.y = blinking ? 0.12 : 1;
+      av.mouth.scale.y = 1 + Math.max(0, Math.sin(t * 2.1 + seat * 3)) * (turn ? 0.5 : 1.5);
+      av.right.position.copy(HAND_R);
       if (av.reach) {
         const k = (t - av.reach.start) / 0.9;
         if (k >= 1) av.reach = null;
-        else {
-          const out = Math.sin(Math.PI * k);
-          av.right.position.lerpVectors(rest, av.reach.to, out);
-          continue;
-        }
+        else av.right.position.lerpVectors(HAND_R, av.reach.to, Math.sin(Math.PI * k));
       }
-      av.right.position.copy(rest);
+      this.poseArms(av);
     }
   }
 
