@@ -50,6 +50,21 @@ describe('lobby', () => {
     assert.throws(() => room.join('Stranger', 'wrong-token'), RoomError);
   });
 
+  it('a player on a new device can take back their seat in a started game, but only if it is free', () => {
+    const { room, tokens } = fullRoom(2);
+    room.start(0);
+    // Mum's phone forgot its seat; Mark is at the table, Mum is not.
+    assert.deepEqual(room.join(undefined, undefined, undefined, { seat: 1, connected: [true, false] }), { seat: 1, token: tokens[1] });
+    // The old token keeps working too, so her other device is not locked out.
+    assert.deepEqual(room.join(undefined, tokens[1]), { seat: 1, token: tokens[1] });
+    // Someone already sitting there now cannot be pushed out.
+    assert.throws(() => room.join(undefined, undefined, undefined, { seat: 0, connected: [true, false] }), /at the table right now/);
+    assert.throws(() => room.join(undefined, undefined, undefined, { seat: 3, connected: [] }), RoomError);
+    // In the lobby a claim is not needed: you simply sit down.
+    const lobby = Room.create('WXYZ', { players: 2, mode: 'live', targetScore: 1500 }, deps(2));
+    assert.equal(lobby.join('Anna', undefined, undefined, { seat: 1, connected: [] }).seat, 0);
+  });
+
   it('cleans names and defaults empty ones', () => {
     const room = Room.create('ABCD', { players: 4, mode: 'async', targetScore: 5000 }, deps());
     room.join('  <b>Mark</b>  ', undefined);

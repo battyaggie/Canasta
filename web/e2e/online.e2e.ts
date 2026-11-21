@@ -103,8 +103,11 @@ try {
   await carl.page.goto(`${base}/?room=${code}`);
   await carl.page.fill('#name', 'Carl');
   await carl.page.click('#join');
-  await carl.page.locator('.form-error').waitFor();
-  check(/already started/.test(await carl.page.locator('.form-error').innerText()), 'a stranger cannot join a game in progress');
+  await carl.page.locator('#claim-panel').waitFor();
+  check(/already started/.test(await carl.page.locator('#claim-panel').innerText()), 'a game in progress cannot be joined as a new player');
+  const seatButtons = carl.page.locator('.claim-seat');
+  check((await seatButtons.count()) === 2 && (await seatButtons.nth(0).isDisabled()) && (await seatButtons.nth(1).isDisabled()), 'nobody can take the seat of a player who is at the table');
+  await carl.page.click('#claim-cancel');
 
   await carl.page.goto(`${base}/?room=ZZZZ`);
   await carl.page.fill('#name', 'Carl');

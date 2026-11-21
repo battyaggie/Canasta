@@ -30,6 +30,19 @@ export interface SeatInfo {
 
 export type Phase = 'lobby' | 'playing' | 'finished';
 
+/** GET /api/room/:code — enough for the start page to describe a saved game and offer its seats. */
+export interface RoomSummary {
+  settings: RoomSettings;
+  phase: Phase;
+  seatsTaken: number;
+  /** Who sits where, and whether they are at the table right now. */
+  seats: { name: string; connected: boolean }[];
+  /** Points per side (side 0 = seats 0 and 2), or null before the first deal. */
+  scores: [number, number] | null;
+  handNumber: number | null;
+  lastMoveAt: number | null;
+}
+
 export interface RoomInfo {
   code: string;
   settings: RoomSettings;
@@ -49,7 +62,8 @@ export type SignalData =
   | { s: string; r?: string; ice: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null } | null };
 
 export type ClientMsg =
-  | { t: 'hello'; token?: string; name?: string; figure?: Figure }
+  /** `seat`: "I am this player" — taking back your own seat on a new or wiped device (game already started). */
+  | { t: 'hello'; token?: string; name?: string; figure?: Figure; seat?: number }
   | { t: 'start' }
   | { t: 'action'; action: Action }
   | { t: 'nextHand' }
@@ -144,7 +158,8 @@ export function parseClientMsg(text: string): ClientMsg {
       const token = typeof raw.token === 'string' && raw.token.length <= 100 ? raw.token : undefined;
       const name = typeof raw.name === 'string' ? raw.name : undefined;
       const figure = raw.figure === 'man' || raw.figure === 'woman' ? raw.figure : undefined;
-      return { t: 'hello', token, name, ...(figure ? { figure } : {}) };
+      const seat = Number.isInteger(raw.seat) && (raw.seat as number) >= 0 && (raw.seat as number) <= 3 ? (raw.seat as number) : undefined;
+      return { t: 'hello', token, name, ...(figure ? { figure } : {}), ...(seat !== undefined ? { seat } : {}) };
     }
     case 'start':
       return { t: 'start' };
