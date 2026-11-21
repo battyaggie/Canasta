@@ -1,6 +1,6 @@
 {
   "packageId": "io.github.battyaggie.canasta",
-  "host": "canasta.example.workers.dev",
+  "host": "canasta.twcanasta.workers.dev",
   "name": "Canasta",
   "launcherName": "Canasta",
   "display": "standalone",
@@ -35,7 +35,7 @@
   "isChromeOSOnly": false,
   "isMetaQuest": true,
   "horizonOSAppMode": "2D",
-  "fullScopeUrl": "https://canasta.example.workers.dev/",
+  "fullScopeUrl": "https://canasta.twcanasta.workers.dev/",
   "minSdkVersion": 21,
   "orientation": "landscape",
   "fingerprints": [],

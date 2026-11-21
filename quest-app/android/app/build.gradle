@@ -23,7 +23,7 @@ plugins {
 
 def twaManifest = [
     applicationId: 'io.github.battyaggie.canasta',
-    hostName: 'canasta.example.workers.dev', // The domain being opened in the TWA.
+    hostName: 'canasta.twcanasta.workers.dev', // The domain being opened in the TWA.
     launchUrl: '/', // The start path for the TWA. Must be relative to the domain.
     name: 'Canasta', // The application name.
     launcherName: 'Canasta', // The name shown on the Android Launcher.
@@ -86,7 +86,7 @@ android {
 
         
             // This is used by Meta Quest.
-            resValue "string", "fullScopeUrl", 'https://canasta.example.workers.dev/'
+            resValue "string", "fullScopeUrl", 'https://canasta.twcanasta.workers.dev/'
         
 
         
