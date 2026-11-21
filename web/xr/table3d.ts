@@ -4,6 +4,7 @@
 // goes through the same checks as on a phone.
 import * as THREE from 'three';
 import { ALL_CARDS, isCanasta, isNaturalCanasta, isWild, sideOf, type MeldPlay, type PlayerView } from '../../engine/src/index.js';
+import { Person, type Look } from './people.js';
 import { CARD_H, CARD_W, cardBack, cardFace, disposeObject, textPanel } from './text.js';
 
 export interface TableModel {
@@ -80,15 +81,23 @@ interface AvatarParts {
   mouth: THREE.Mesh;
   nextBlink: number;
   reach: { to: THREE.Vector3; start: number } | null;
+  /** The ready-made person, once its model has loaded; until then (or if it can't load) the simple figure shows. */
+  person: Person | null;
+  /** The simple figure's parts, hidden once the person is there. */
+  simple: THREE.Object3D[];
+  online: boolean;
 }
 
 /** A look for each seat: shirt, skin and hair, so the players are easy to tell apart. */
-const LOOKS = [
-  { shirt: 0x3d7bd9, skin: 0xf1c9a5, hair: 0x5a3a22, long: false },
-  { shirt: 0xc8553d, skin: 0xe0ac85, hair: 0xb8b8b8, long: true },
-  { shirt: 0x47a86b, skin: 0xc68d63, hair: 0x1f1a17, long: false },
-  { shirt: 0x8e4fc9, skin: 0xf3d2b8, hair: 0xc9963f, long: true },
+const LOOKS: ({ shirt: number; skin: number; hair: number; long: boolean } & { person: Look })[] = [
+  { shirt: 0x3d7bd9, skin: 0xf1c9a5, hair: 0x5a3a22, long: false, person: { build: 'man', skin: 0xf8e6d8, hair: 0x6b4a2e, outfit: 0xb4c8ff } },
+  { shirt: 0xc8553d, skin: 0xe0ac85, hair: 0xb8b8b8, long: true, person: { build: 'woman', skin: 0xf2dccc, hair: 0xd6d6d6, outfit: 0xffc4b4 } },
+  { shirt: 0x47a86b, skin: 0xc68d63, hair: 0x1f1a17, long: false, person: { build: 'man', skin: 0xb98a6a, hair: 0x2a2420, outfit: 0xc0ecc4 } },
+  { shirt: 0x8e4fc9, skin: 0xf3d2b8, hair: 0xc9963f, long: true, person: { build: 'woman', skin: 0xfff2e8, hair: 0xe0b060, outfit: 0xdcc4ff } },
 ];
+/** Where a ready-made person rests their hands (seat space): low in front, holding their cards. */
+const PERSON_HAND_L = new THREE.Vector3(0.1, 0.87, 0.25);
+const PERSON_HAND_R = new THREE.Vector3(-0.1, 0.87, 0.25);
 const SHOULDER_L = new THREE.Vector3(-0.19, 1.12, 0.02);
 const SHOULDER_R = new THREE.Vector3(0.19, 1.12, 0.02);
 const HAND_L = new THREE.Vector3(-0.13, 0.88, 0.27);
@@ -556,13 +565,8 @@ export class Table3D {
       av.root.position.set(pose.x, 0, pose.z);
       av.root.rotation.y = pose.ry;
       const online = m.seatOnline[seat] ?? false;
-      av.root.traverse((o) => {
-        const mat = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
-        if (mat && 'opacity' in mat && o.userData.avatarPart) {
-          mat.transparent = !online;
-          mat.opacity = online ? 1 : 0.35;
-        }
-      });
+      av.online = online;
+      this.fadeAvatar(av);
 
       // The parts below change with the game, so they live in the rebuilt group, parented to the seat.
       const seatGroup = new THREE.Group();
@@ -611,6 +615,33 @@ export class Table3D {
         this.avatars.delete(seat);
       }
     }
+  }
+
+  /** A player who is away is drawn see-through. */
+  private fadeAvatar(av: AvatarParts): void {
+    av.root.traverse((o) => {
+      const mat = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (mat && 'opacity' in mat && o.userData.avatarPart) {
+        mat.transparent = !av.online;
+        mat.opacity = av.online ? 1 : 0.35;
+      }
+    });
+  }
+
+  /** Swap the simple figure for the ready-made person once its model has loaded. */
+  private async addPerson(av: AvatarParts, look: Look): Promise<void> {
+    let person: Person;
+    try {
+      person = await Person.create(look);
+    } catch (e) {
+      console.warn('3D table: keeping the simple figures, the people did not load', e);
+      return;
+    }
+    if (![...this.avatars.values()].includes(av)) return; // the seat went away while loading
+    av.root.add(person.root);
+    for (const o of av.simple) o.visible = false;
+    av.person = person;
+    this.fadeAvatar(av);
   }
 
   private makeAvatar(look: (typeof LOOKS)[number]): AvatarParts {
@@ -707,8 +738,10 @@ export class Table3D {
     const back = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.55, 0.04), wood);
     back.position.set(0, 0.72, -0.27);
     root.add(seat, back);
-    const av: AvatarParts = { root, body, head, left, right, arms, elbows, eyes, mouth, nextBlink: Math.random() * 4, reach: null };
+    const simple = root.children.filter((o) => o !== seat && o !== back);
+    const av: AvatarParts = { root, body, head, left, right, arms, elbows, eyes, mouth, nextBlink: Math.random() * 4, reach: null, person: null, simple, online: true };
     this.poseArms(av);
+    void this.addPerson(av, look.person);
     return av;
   }
 
@@ -758,13 +791,20 @@ export class Table3D {
       if (t > av.nextBlink + 0.12) av.nextBlink = t + 2.5 + Math.random() * 3;
       for (const eye of av.eyes) eye.scale.y = blinking ? 0.12 : 1;
       av.mouth.scale.y = 1 + Math.max(0, Math.sin(t * 2.1 + seat * 3)) * (turn ? 0.5 : 1.5);
-      av.right.position.copy(HAND_R);
+      const rest = av.person ? PERSON_HAND_R : HAND_R;
+      av.right.position.copy(rest);
+      let stretch = 0;
       if (av.reach) {
-        const k = (t - av.reach.start) / 0.9;
+        const k = (t - av.reach.start) / (av.person ? 1.3 : 0.9);
         if (k >= 1) av.reach = null;
-        else av.right.position.lerpVectors(HAND_R, av.reach.to, Math.sin(Math.PI * k));
+        else {
+          stretch = Math.sin(Math.PI * k);
+          av.right.position.lerpVectors(rest, av.reach.to, stretch);
+        }
       }
-      this.poseArms(av);
+      // A real arm can't reach the middle of the table sitting up straight: lean over to reach it.
+      if (av.person) av.person.pose([PERSON_HAND_L, av.right.position], av.body.rotation.x * 1.4 + stretch * 0.55, av.head.rotation.x * 0.7, av.head.rotation.y);
+      else this.poseArms(av);
     }
   }
 

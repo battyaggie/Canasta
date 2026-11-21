@@ -20,11 +20,18 @@ cpSync('web/icons', 'dist/public/icons', { recursive: true });
 mkdirSync('dist/public/vendor/three', { recursive: true });
 cpSync('node_modules/three/build/three.module.min.js', 'dist/public/vendor/three/three.module.min.js');
 cpSync('node_modules/three/LICENSE', 'dist/public/vendor/three/LICENSE.txt');
+// The few three.js add-ons the 3D table uses: loading the people models and copying them per seat.
+for (const f of ['loaders/GLTFLoader.js', 'utils/BufferGeometryUtils.js', 'utils/SkeletonUtils.js']) {
+  cpSync(`node_modules/three/examples/jsm/${f}`, `dist/public/vendor/three/addons/${f}`);
+}
+// The people at the 3D table (about 3 MB). Not in the offline list below: they load the first time someone
+// opens the 3D table, and the service worker keeps them from then on.
+cpSync('web/avatars', 'dist/public/avatars', { recursive: true });
 
 // The service worker caches every file of the app. Its name changes whenever any file changes,
 // which is how phones learn that a new version is available.
 const walk = (dir) => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? walk(join(dir, f)) : [join(dir, f)]));
-const files = walk('dist/public').map((f) => '/' + f.slice('dist/public/'.length)).filter((f) => f !== '/index.html').sort(); // the page itself is cached as '/' (hosts may redirect /index.html)
+const files = walk('dist/public').map((f) => '/' + f.slice('dist/public/'.length)).filter((f) => f !== '/index.html' && !f.startsWith('/avatars/')).sort(); // the page itself is cached as '/' (hosts may redirect /index.html)
 const hash = createHash('sha256');
 for (const f of files) hash.update(f).update(readFileSync('dist/public' + f));
 const sw = readFileSync('web/sw.js', 'utf8')
