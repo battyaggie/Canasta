@@ -55,9 +55,15 @@ type Hit =
 // The player sits at the origin looking down -z. The table top is at TABLE_Y, eyes at about EYE_Y.
 const TABLE_Y = 0.72;
 const EYE_Y = 1.22;
-const TABLE_Z = -0.55;
-const TABLE_W = 1.4;
-const TABLE_D = 1.0;
+const TABLE_W = 1.9;
+const TABLE_D = 1.25;
+/** Table centre: the near edge stays just in front of the player. */
+const TABLE_Z = -0.05 - TABLE_D / 2;
+/** Cards lying on the table are drawn larger than real cards (like jumbo cards) so they are easy to read in a headset. */
+const BIG = 1.6;
+const STOCK_X = -0.12;
+const PILE_X = 0.12;
+const MELD_GAP = 0.135;
 const LIFT = 0.0006; // keeps stacked flat cards from flickering into each other
 
 const SEAT_COLORS = [0x3d7bd9, 0xd96a3d, 0x47a86b, 0xa04fc9];
@@ -267,8 +273,8 @@ export class Table3D {
     const myPlay = v.status === 'playing' && v.turn.player === v.you && v.turn.phase === 'play';
 
     this.buildCenter(m);
-    this.buildMelds(m, mySide, -0.4, m.canAddToMelds, 'mine');
-    this.buildMelds(m, 1 - mySide, -0.98, false, 'theirs');
+    this.buildMelds(m, mySide, TABLE_Z + 0.135, m.canAddToMelds, 'mine');
+    this.buildMelds(m, 1 - mySide, TABLE_Z - TABLE_D / 2 + 0.035, false, 'theirs');
     this.buildAvatars(m);
 
     if (m.coveredFor) {
@@ -281,7 +287,7 @@ export class Table3D {
     // Information board, above the far side of the table.
     const lines = [m.scoreLine, m.hint].filter(Boolean).join('\n');
     const board = textPanel(lines, { width: 1.0, height: 0.24, size: 0.036, align: 'left' });
-    board.position.set(0, 1.8, -1.5);
+    board.position.set(0, 1.85, TABLE_Z - TABLE_D / 2 - 0.35);
     board.rotation.x = 0.12;
     this.dynamic.add(board);
     const note = m.toast ?? m.connection;
@@ -356,6 +362,8 @@ export class Table3D {
   /** A card lying face up on the table, its top edge pointing away from the player. */
   private flatCard(id: number | null, x: number, z: number, layer: number): THREE.Mesh {
     const c = this.card(id);
+    c.scale.setScalar(BIG);
+    c.userData.baseScale = BIG;
     c.rotation.x = -Math.PI / 2;
     c.position.set(x, TABLE_Y + LIFT * (layer + 1), z);
     return c;
@@ -365,39 +373,39 @@ export class Table3D {
     const v = m.view;
     // Stock: a squared stack of backs.
     const height = Math.max(0.002, v.stockCount * 0.0003);
-    const stack = new THREE.Mesh(new THREE.BoxGeometry(CARD_W, height, CARD_H), new THREE.MeshStandardMaterial({ color: 0xf2f2f2 }));
-    stack.position.set(-0.08, TABLE_Y + height / 2, TABLE_Z);
+    const stack = new THREE.Mesh(new THREE.BoxGeometry(CARD_W * BIG, height, CARD_H * BIG), new THREE.MeshStandardMaterial({ color: 0xf2f2f2 }));
+    stack.position.set(STOCK_X, TABLE_Y + height / 2, TABLE_Z);
     this.dynamic.add(stack);
-    const top = this.flatCard(null, -0.08, TABLE_Z, 0);
+    const top = this.flatCard(null, STOCK_X, TABLE_Z, 0);
     top.position.y = TABLE_Y + height + LIFT;
     this.addHit(top, { kind: 'stock' }, 'stock');
     stack.userData.hit = { kind: 'stock' } satisfies Hit;
     this.hits.push(stack);
-    this.label(`Stock ${v.stockCount}`, -0.08, TABLE_Z - 0.075);
+    this.label(`Stock ${v.stockCount}`, STOCK_X, TABLE_Z - 0.105);
 
     // Discard pile. Where the player may look through it, the cards are spread so every index shows.
     const pile = v.pile;
     if (pile.length === 0) {
-      const empty = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_H), new THREE.MeshBasicMaterial({ color: 0x0a4029 }));
+      const empty = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W * BIG, CARD_H * BIG), new THREE.MeshBasicMaterial({ color: 0x0a4029 }));
       empty.rotation.x = -Math.PI / 2;
-      empty.position.set(0.08, TABLE_Y + LIFT, TABLE_Z);
+      empty.position.set(PILE_X, TABLE_Y + LIFT, TABLE_Z);
       this.addHit(empty, { kind: 'pile' }, 'pile');
     } else {
       const shown = m.canLookThrough ? pile.slice(-20) : pile.slice(-1);
       shown.forEach((id, i) => {
-        const c = this.flatCard(id, 0.08 + i * 0.016, TABLE_Z, i);
+        const c = this.flatCard(id, PILE_X + i * 0.026, TABLE_Z, i);
         // A frozen pile is marked, as at a real table, by a wild card turned sideways.
         if (v.pileFrozen && isWild(ALL_CARDS[id]!) && i === shown.length - 1) c.rotation.z = Math.PI / 2;
         this.addHit(c, { kind: 'pile' }, i === shown.length - 1 ? 'pile' : undefined);
       });
     }
-    this.label(`Pile ${pile.length}${v.pileFrozen ? ' · frozen' : ''}`, 0.08, TABLE_Z - 0.075);
+    this.label(`Pile ${pile.length}${v.pileFrozen ? ' · frozen' : ''}`, PILE_X, TABLE_Z - 0.105);
   }
 
   /** A small upright label standing on the table. */
-  private label(text: string, x: number, z: number, width = 0.12): void {
-    const l = textPanel(text, { width, height: 0.026, size: 0.016 });
-    l.position.set(x, TABLE_Y + 0.016, z);
+  private label(text: string, x: number, z: number, width = 0.17): void {
+    const l = textPanel(text, { width, height: 0.04, size: 0.025 });
+    l.position.set(x, TABLE_Y + 0.024, z);
     l.rotation.x = -0.5;
     this.dynamic.add(l);
   }
@@ -405,15 +413,16 @@ export class Table3D {
   private buildMelds(m: TableModel, side: number, farZ: number, clickable: boolean, who: 'mine' | 'theirs'): void {
     const st = m.view.sides[side as 0 | 1];
     st.melds.forEach((meld, i) => {
-      const x = -0.6 + i * 0.085;
+      // Melds sit in a row centred in front of their owner, so the first ones are right in front of you.
+      const x = (i - (st.melds.length - 1) / 2) * MELD_GAP - 0.04;
       const canasta = isCanasta(meld);
-      const step = canasta ? 0.006 : 0.018;
+      const step = canasta ? 0.01 : 0.029;
       const ids = [...meld.cardIds].sort((a, b) => Number(isWild(ALL_CARDS[a]!)) - Number(isWild(ALL_CARDS[b]!)));
-      const length = CARD_H + step * (ids.length - 1);
+      const length = CARD_H * BIG + step * (ids.length - 1);
       const color = canasta ? (isNaturalCanasta(meld) ? 0xc62828 : 0x222222) : 0x0b4a2f;
       const chosen = clickable && m.target === meld.rank;
       const base = new THREE.Mesh(
-        new THREE.PlaneGeometry(CARD_W + 0.012, length + 0.012),
+        new THREE.PlaneGeometry(CARD_W * BIG + 0.014, length + 0.014),
         new THREE.MeshBasicMaterial({ color: chosen ? 0xffd54a : color }),
       );
       base.rotation.x = -Math.PI / 2;
@@ -422,13 +431,13 @@ export class Table3D {
       if (hit) this.addHit(base, hit, `meld:${who}:${meld.rank}`);
       else this.dynamic.add(base);
       ids.forEach((id, j) => {
-        const c = this.flatCard(id, x, farZ + CARD_H / 2 + j * step, j + 1);
+        const c = this.flatCard(id, x, farZ + (CARD_H * BIG) / 2 + j * step, j + 1);
         if (hit) this.addHit(c, hit);
         else this.dynamic.add(c);
       });
-      this.label(`${meld.rank === '3' ? 'Black 3s' : meld.rank} ×${meld.cardIds.length}`, x, farZ - 0.022, 0.08);
+      this.label(`${meld.rank === '3' ? 'Black 3s' : meld.rank} ×${meld.cardIds.length}`, x, farZ - 0.03, 0.125);
     });
-    st.redThrees.forEach((id, j) => this.dynamic.add(this.flatCard(id, 0.6, farZ + CARD_H / 2 + j * 0.018, j)));
+    st.redThrees.forEach((id, j) => this.dynamic.add(this.flatCard(id, 0.88, farZ + (CARD_H * BIG) / 2 + j * 0.029, j)));
   }
 
   private buildHand(m: TableModel): void {
@@ -586,9 +595,9 @@ export class Table3D {
     const av = this.avatars.get(actor);
     if (!av) return;
     const target = new THREE.Vector3();
-    if (now.stockCount < before.stockCount) target.set(-0.08, TABLE_Y + 0.03, TABLE_Z);
-    else if (now.pile.length !== before.pile.length) target.set(0.08, TABLE_Y + 0.03, TABLE_Z);
-    else if (now.sides.some((s, i) => s.melds.length !== before.sides[i]!.melds.length)) target.set(0, TABLE_Y + 0.03, TABLE_Z - 0.3);
+    if (now.stockCount < before.stockCount) target.set(STOCK_X, TABLE_Y + 0.03, TABLE_Z);
+    else if (now.pile.length !== before.pile.length) target.set(PILE_X, TABLE_Y + 0.03, TABLE_Z);
+    else if (now.sides.some((s, i) => s.melds.length !== before.sides[i]!.melds.length)) target.set(0, TABLE_Y + 0.03, TABLE_Z - 0.35);
     else return;
     this.tableRoot.localToWorld(target);
     av.root.worldToLocal(target);
