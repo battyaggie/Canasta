@@ -580,7 +580,7 @@ export class Table3D {
         border: turn ? '#ffffff' : undefined,
       });
       // Above the head (which reaches about 1.48 m), turned to face the viewer every frame.
-      tag.position.set(0, 1.62, 0);
+      tag.position.set(0, 1.575, 0);
       this.billboards.push(tag);
       seatGroup.add(tag);
       // Their hand, backs towards me, held in front of the body.
@@ -598,9 +598,9 @@ export class Table3D {
         c.rotation.z = a;
         fan.add(c);
       }
-      const countTag = textPanel(`${m.seatNames[seat] ?? `Seat ${seat + 1}`} · ${count} cards`, { width: 0.26, height: 0.042, size: 0.022, bold: true });
+      const countTag = textPanel(`${m.seatNames[seat] ?? `Seat ${seat + 1}`} · ${count} cards`, { width: 0.4, height: 0.064, size: 0.034, bold: true, bg: 'rgba(255,255,255,0.95)', fg: '#111' });
       // A name badge on the chest as well, so names show even when the sign above the head is out of view.
-      countTag.position.set(0, 1.06, 0.12);
+      countTag.position.set(0, 1.07, 0.13);
       seatGroup.add(countTag);
       this.billboards.push(countTag);
     }
@@ -937,7 +937,7 @@ export class Table3D {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     // On a narrow phone-shaped window, step back a little so the whole table fits.
-    this.camera.fov = w / h < 1 ? 84 : 66;
+    this.camera.fov = w / h < 1 ? 86 : 70;
     this.camera.updateProjectionMatrix();
   }
 
