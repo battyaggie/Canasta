@@ -73,5 +73,16 @@ reduced to counts, so it is safe to send to a browser.
 
 ## Not built yet
 
-Turn timers and reconnection, bots, accounts and lobby, the web interface, and the
+Turn timers and reconnection, accounts and lobby, the web interface, and the
 server that holds each game. Those depend on the hosting choice.
+
+## Computer players (`src/bot.ts`)
+
+`botAction(view, level)` returns one legal action for the seat whose `PlayerView` it is given, so a
+bot sees only what a human in that seat would see. Every move it considers is first tried with the real
+engine on a copy of the game, so it never proposes an illegal move. Normal: takes the pile when it holds
+3+ cards (or when the top card joins one of its melds at no cost), makes the first meld with the fewest
+wild cards, adds wild cards to finish its first canasta, keeps pairs for taking the pile, goes out as soon
+as it can, and discards black threes first and cards the next player could use last. Easy: the same, but
+it often ignores the pile, rarely finishes canastas with wild cards, and makes some random discards.
+In 200-game tests Normal beats Easy about 3 games in 4.

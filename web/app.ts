@@ -16,6 +16,7 @@ import type { ClientMsg, Mode, RoomInfo, ServerMsg } from '../shared/protocol.js
 import { cardBack, cardEl, cardLabel, sortHand } from './cardview.js';
 import { h } from './dom.js';
 import { LocalTransport, clearSavedLocal, loadSavedLocal, type Status, type Transport, WsTransport } from './transport.js';
+import type { Table3D, TableActions, TableModel } from './xr/table3d.js';
 
 // ------------------------------------------------------------------ state
 
@@ -41,11 +42,18 @@ let staged: MeldPlay[] = [];
 /** A meld on the table the player has tapped: cards tapped in the hand now go straight onto it. */
 let target: MeldPlay['rank'] | null = null;
 
+/** The 3D table (three.js, loaded only when someone asks for it). */
+let table3d: Table3D | null = null;
+let in3d = false;
+let xr = { vr: false, ar: false };
+const host3d = h('div', { class: 'three-host', id: 'three-host' });
+
 const form = {
   name: safeGet('canasta.name') ?? '',
   players: '2',
   mode: 'live' as Mode,
   target: '5000',
+  botLevel: 'normal' as 'easy' | 'normal',
   joinCode: '',
   error: '',
 };
@@ -111,7 +119,8 @@ function handleMessage(msg: ServerMsg): void {
   room = msg.room;
   view = msg.view;
   // Pass & play: hide the cards whenever the turn moves to someone else, and at the start of each hand.
-  if (isLocal && view?.status === 'playing' && (previousSeat !== you || previousStatus !== 'playing')) covered = true;
+  // Not against the computer: there is only one person at the screen.
+  if (isLocal && !vsComputer() && view?.status === 'playing' && (previousSeat !== you || previousStatus !== 'playing')) covered = true;
   reconcileSelection();
   const key = view ? `${view.handNumber}:${view.status}` : '';
   if (key !== lastOverlayKey) {
@@ -132,7 +141,9 @@ function reconcileSelection(): void {
   if (!myPlay || !side?.melds.some((m) => m.rank === target)) target = null;
 }
 
-function openTransport(t: (events: { onMessage: typeof handleMessage; onStatus: (s: Status) => void }) => Transport): void {
+function openTransport(
+  t: (events: { onMessage: typeof handleMessage; onStatus: (s: Status) => void; onNote: (text: string) => void }) => Transport,
+): void {
   resetGameState();
   transport?.close();
   transport = t({
@@ -141,6 +152,7 @@ function openTransport(t: (events: { onMessage: typeof handleMessage; onStatus: 
       status = s;
       render();
     },
+    onNote: showToast,
   });
 }
 
@@ -201,15 +213,20 @@ async function createTable(): Promise<void> {
   }
 }
 
-function startLocal(players: 2 | 4, resume = false): void {
+function startLocal(players: 2 | 4, resume = false, vsComp = false): void {
   const saved = resume ? loadSavedLocal() : null;
   isLocal = true;
   roomCode = 'LOCAL';
-  openTransport((events) => new LocalTransport(saved?.settings.players ?? players, events, saved));
+  const vs = vsComp ? { level: form.botLevel, name: form.name.trim() || undefined } : undefined;
+  openTransport((events) => new LocalTransport(saved?.settings.players ?? players, events, saved, vs));
   render();
 }
 
+/** Playing against computer players on this device. */
+const vsComputer = (): boolean => isLocal && !!room?.settings.bots?.length;
+
 function leave(): void {
+  exit3d(false);
   transport?.close();
   transport = null;
   resetGameState();
@@ -458,7 +475,7 @@ function renderHome(): HTMLElement {
       return h(
         'section',
         { class: 'panel' },
-        h('h2', {}, 'Unfinished pass & play game'),
+        h('h2', {}, saved.settings.bots?.length ? 'Unfinished game against the computer' : 'Unfinished pass & play game'),
         h('p', { class: 'muted' }, `${saved.settings.players} players · hand ${g.handNumber} · score ${g.scores[0]} to ${g.scores[1]}`),
         h(
           'div',
@@ -478,6 +495,27 @@ function renderHome(): HTMLElement {
         { class: 'row buttons' },
         h('button', { id: 'local2', onclick: () => startLocal(2) }, '2 players'),
         h('button', { id: 'local4', onclick: () => startLocal(4) }, '4 players'),
+      ),
+    ),
+    h(
+      'section',
+      { class: 'panel' },
+      h('h2', {}, 'Play against the computer'),
+      h('p', { class: 'muted' }, 'On your own: against one computer player, or with a computer partner against two. No internet needed.'),
+      h(
+        'label',
+        {},
+        'Computer players: ',
+        select('bot-level', form.botLevel, (v) => (form.botLevel = v as 'easy' | 'normal'), [
+          ['normal', 'Normal'],
+          ['easy', 'Easy'],
+        ]),
+      ),
+      h(
+        'div',
+        { class: 'row buttons' },
+        h('button', { id: 'vs2', onclick: () => startLocal(2, false, true) }, 'You against the computer'),
+        h('button', { id: 'vs4', onclick: () => startLocal(4, false, true) }, 'You and a partner against two'),
       ),
     ),
 
@@ -750,11 +788,12 @@ function renderGame(): HTMLElement {
       'header',
       { class: 'topbar' },
       h('span', { class: 'brand' }, 'Canasta'),
-      isLocal ? h('span', { class: 'tag' }, 'pass & play') : h('span', { class: 'tag', id: 'room-code' }, info.code),
+      isLocal ? h('span', { class: 'tag' }, vsComputer() ? 'vs computer' : 'pass & play') : h('span', { class: 'tag', id: 'room-code' }, info.code),
       isLocal ? null : h('span', { class: 'tag' }, info.settings.mode === 'live' ? 'Live' : 'Take turns'),
       !isLocal && info.settings.mode === 'async' && info.lastMoveAt ? h('span', { class: 'muted small' }, `last move ${timeAgo(info.lastMoveAt)}`) : null,
       h('span', { class: 'spacer' }),
       status !== 'open' && !isLocal ? h('span', { class: 'tag off', role: 'status' }, status === 'connecting' ? 'connecting…' : 'reconnecting…') : null,
+      h('button', { class: 'small-btn', id: 'enter-3d', onclick: () => void enter3d() }, '3D table'),
       h('button', { class: 'small-btn', onclick: () => ((overlayOpen = true), render()) }, 'Scores'),
       h('button', { class: 'small-btn', onclick: leave }, 'Leave'),
     ),
@@ -839,18 +878,7 @@ function renderOverlay(): HTMLElement | null {
         h('tbody', {}, ...order.map((s) => h('tr', {}, h('th', {}, sideLabel(s)), h('td', {}, v.scores[s as 0 | 1].toLocaleString('en'))))),
       );
 
-  const title = over
-    ? v.winner === mySide
-      ? v.config.players === 2
-        ? 'You win!'
-        : 'Your side wins!'
-      : `${sideNames(v.winner ?? 0)} win${v.config.players === 2 ? 's' : ''}`
-    : result
-      ? result.endedBy === 'wentOut'
-        ? `${seatName(result.wentOutPlayer!)} went out${result.concealed ? ' (concealed)' : ''}`
-        : 'The stock ran out'
-      : 'Scores';
-
+  const title = overlayTitle(v);
   return h(
     'div',
     { class: 'overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Scores' },
@@ -868,6 +896,146 @@ function renderOverlay(): HTMLElement | null {
       ),
     ),
   );
+}
+
+function overlayTitle(v: PlayerView): string {
+  const mySide = sideOf(v.config, v.you);
+  const result = v.handResult;
+  const over = v.status === 'gameOver';
+  return over
+    ? v.winner === mySide
+      ? v.config.players === 2
+        ? 'You win!'
+        : 'Your side wins!'
+      : `${sideNames(v.winner ?? 0)} win${v.config.players === 2 ? 's' : ''}`
+    : result
+      ? result.endedBy === 'wentOut'
+        ? `${seatName(result.wentOutPlayer!)} went out${result.concealed ? ' (concealed)' : ''}`
+        : 'The stock ran out'
+      : 'Scores';
+}
+
+// ------------------------------------------------------------------ 3D table
+
+async function enter3d(): Promise<void> {
+  in3d = true;
+  render();
+  if (table3d) return;
+  try {
+    const mod = await import('./xr/table3d.js');
+    if (!in3d) return;
+    table3d = new mod.Table3D(host3d, tableActions);
+    xr = await mod.xrSupport();
+    render();
+  } catch (e) {
+    in3d = false;
+    showToast('The 3D table could not start on this device.');
+    console.error(e);
+  }
+}
+
+function exit3d(rerender = true): void {
+  table3d?.dispose();
+  table3d = null;
+  in3d = false;
+  if (rerender) render();
+}
+
+function render3dControls(): HTMLElement {
+  return h(
+    'div',
+    { class: 'three-controls' },
+    view ? h('p', { class: `three-hint${view.turn.player === you ? ' mine' : ''}`, id: 'hint', 'aria-live': 'polite' }, hintText()) : null,
+    xr.vr ? h('button', { class: 'primary', id: 'enter-vr', onclick: () => void table3d?.enterXR('immersive-vr').catch(() => showToast('Could not start the headset view.')) }, 'Enter VR') : null,
+    h('button', { id: 'exit-3d', onclick: () => exit3d() }, '2D view'),
+  );
+}
+
+const tableActions: TableActions = {
+  tapCard(id) {
+    if (!view || view.turn.player !== you || view.turn.phase !== 'play' || view.status !== 'playing') {
+      // Picking cards is fine at any time (plan ahead); only moves wait for your turn.
+      if (selected.has(id)) selected.delete(id);
+      else selected.add(id);
+      return render();
+    }
+    if (target) return addToTarget(id);
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    render();
+  },
+  tapMeld: (rank) => tapMeld(rank),
+  tapStock() {
+    if (!view || view.status !== 'playing') return;
+    if (view.turn.player !== you) return showToast(`It's ${seatName(view.turn.player)}'s turn.`);
+    if (view.turn.phase !== 'draw') return showToast('You have already drawn this turn.');
+    send({ t: 'action', action: { type: 'drawStock' } });
+  },
+  tapPile() {
+    if (!view || view.status !== 'playing') return;
+    if (view.turn.player !== you) return showToast(`It's ${seatName(view.turn.player)}'s turn.`);
+    // The same pile means "take it" before you draw and "discard onto it" after.
+    if (view.turn.phase === 'draw') return takePile();
+    discard();
+  },
+  tapCloth() {
+    if (!view || view.turn.player !== you || view.turn.phase !== 'play') return;
+    if (selected.size > 0) void stageSelection();
+    else if (target) {
+      target = null;
+      render();
+    }
+  },
+  layDown: () => layDown(),
+  clear: () => clearSelection(),
+  skipDiscard: () => send({ t: 'action', action: { type: 'skipDiscard' } }),
+  reveal() {
+    covered = false;
+    render();
+  },
+  nextHand: () => send({ t: 'nextHand' }),
+  rematch: () => send({ t: 'rematch' }),
+  closeOverlay() {
+    overlayOpen = false;
+    render();
+  },
+  exit: () => exit3d(),
+};
+
+function tableModel(): TableModel {
+  const v = view!;
+  const info = room!;
+  const mySide = sideOf(v.config, you);
+  const myPlay = v.status === 'playing' && v.turn.player === you && v.turn.phase === 'play';
+  const hidden = stagedIds();
+  const result = v.handResult;
+  const order = [mySide, 1 - mySide] as const;
+  let overlay: TableModel['overlay'] = null;
+  if (overlayOpen && v.status !== 'playing') {
+    overlay = {
+      title: overlayTitle(v),
+      lines: order.map((s) => `${sideLabel(s)}: ${result ? `this hand ${result.sideScores[s as 0 | 1].total}, ` : ''}total ${v.scores[s as 0 | 1].toLocaleString('en')}`),
+      button: v.status === 'handOver' ? 'nextHand' : v.status === 'gameOver' ? 'rematch' : null,
+    };
+  }
+  return {
+    view: v,
+    seatNames: info.seats.map((_, i) => seatName(i)),
+    seatOnline: info.seats.map((s) => isLocal || !!s?.connected),
+    hand: sortHand(v.myHand.filter((id) => !hidden.has(id))),
+    selected,
+    staged,
+    target,
+    canAddToMelds: myPlay,
+    canSkipDiscard: myPlay && v.myHand.length === 1 && !v.sides[mySide as 0 | 1].melds.some(isCanasta),
+    canLookThrough: info.settings.mode === 'async',
+    scoreLine: order.map((s) => `${sideLabel(s)} ${v.scores[s as 0 | 1].toLocaleString('en')}`).join('   ·   '),
+    hint: hintText(),
+    toast: toastText,
+    connection: status !== 'open' && !isLocal ? (status === 'connecting' ? 'Connecting…' : 'Reconnecting…') : null,
+    coveredFor: isLocal && covered && v.status === 'playing' ? seatName(you) : null,
+    overlay,
+  };
 }
 
 function renderCover(): HTMLElement {
@@ -888,9 +1056,12 @@ function render(): void {
   if (fatal) children.push(renderError(fatal));
   else if (!transport) children.push(renderHome());
   else if (!room) children.push(h('div', { class: 'home' }, h('h1', {}, 'Canasta'), h('p', { class: 'muted', role: 'status' }, 'Connecting to the table…'), h('button', { onclick: leave }, 'Cancel')));
-  else if (isLocal && covered && view?.status === 'playing') children.push(renderCover());
+  else if (isLocal && covered && view?.status === 'playing' && !in3d) children.push(renderCover());
   else if (!view || room.phase === 'lobby') children.push(renderLobby());
-  else {
+  else if (in3d) {
+    children.push(host3d, render3dControls());
+    if (table3d) table3d.update(tableModel());
+  } else {
     children.push(renderGame());
     children.push(renderOverlay());
   }

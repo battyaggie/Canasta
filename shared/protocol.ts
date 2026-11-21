@@ -11,6 +11,10 @@ export interface RoomSettings {
   /** live: everyone is online; async: take your turn whenever, the game waits. */
   mode: Mode;
   targetScore: number;
+  /** Seats played by the computer. Only used on one device (vs computer); online tables never set it. */
+  bots?: number[];
+  /** How well the computer plays. Default 'normal'. */
+  botLevel?: 'easy' | 'normal';
 }
 
 export interface SeatInfo {
