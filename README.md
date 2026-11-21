@@ -75,7 +75,7 @@ player. It works with a mouse or touch on any screen, and in a headset:
    - Cards in your hand: select. The cloth in front of you: set the selected cards aside for a meld. **Lay down**: send them.
    - A meld of yours, then cards: add those cards to it.
 4. **Carry cards:** pick some cards, then hold the trigger or pinch (or squeeze the grip) on one of them and move: they come along. Let go over the table to lay them down as a new meld, over one of your melds to add to it, or over the pile to discard. With a mouse, drag a card out of your hand.
-4. **Recentre** puts the table in front of you again. **Leave headset view** goes back to the screen.
+5. **Recentre** puts the table in front of you again. **Leave headset view** goes back to the screen.
 
 Everyone at an online table can choose their own view: one person in a headset, the others on phones with the normal app.
 Other players' avatars act out their moves (reaching for the stock or pile, leaning in on their turn); they do not follow
