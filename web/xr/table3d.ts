@@ -71,6 +71,8 @@ const BIG = 1.6;
 const STOCK_X = -0.12;
 const PILE_X = 0.12;
 const MELD_GAP = 0.135;
+/** How long a card takes to glide to a new place, in seconds. */
+const GLIDE_S = 0.35;
 const LIFT = 0.0006; // keeps stacked flat cards from flickering into each other
 
 
@@ -168,6 +170,10 @@ export class Table3D {
   /** Cards being carried by hand (or mouse), to be put down on the table. */
   private carry: { ids: number[]; source: THREE.Group | 'mouse'; by: 'select' | 'squeeze' | 'mouse'; group: THREE.Group } | null = null;
   private clock = new THREE.Clock();
+  /** Cards on their way to a new place. */
+  private glides: { obj: THREE.Object3D; fromPos: THREE.Vector3; fromQuat: THREE.Quaternion; toPos: THREE.Vector3; toQuat: THREE.Quaternion; t0: number }[] = [];
+  /** Where carried cards were let go, until the next rebuild. */
+  private carried = new Map<number, { pos: THREE.Vector3; quat: THREE.Quaternion }>();
 
   constructor(
     private host: HTMLElement,
@@ -211,18 +217,28 @@ export class Table3D {
 
     // Browser tests click on things in the scene by name.
     (window as unknown as { __canasta3d?: unknown }).__canasta3d = {
-      point: (name: string) => this.screenPoint(name),
+      point: (name: string) => {
+        this.finishGlides();
+        return this.screenPoint(name);
+      },
+      /** True while cards are still gliding to their places. */
+      gliding: () => this.glides.length > 0,
       names: () => [...this.named.keys()],
-      world: (name: string) => this.named.get(name)?.getWorldPosition(new THREE.Vector3()).toArray() ?? null,
+      world: (name: string) => {
+        this.finishGlides();
+        return this.named.get(name)?.getWorldPosition(new THREE.Vector3()).toArray() ?? null;
+      },
       presenting: () => this.renderer.xr.isPresenting,
       /** What a click at this screen point would hit (tests). */
       at: (x: number, y: number) => {
+        this.finishGlides();
         const rect = this.renderer.domElement.getBoundingClientRect();
         const hit = this.ndcHit(new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1));
         return hit ? ([...this.named].find(([, o]) => o === hit.object)?.[0] ?? (hit.object.userData.hit as Hit).kind) : null;
       },
       /** What the player's eye sees first when looking at a named thing (tests: is it hidden behind the hand?). */
       seenFirst: (name: string) => {
+        this.finishGlides();
         const obj = this.named.get(name);
         if (!obj) return null;
         const eye = (this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera).getWorldPosition(new THREE.Vector3());
@@ -334,7 +350,87 @@ export class Table3D {
 
   // ---------------------------------------------------------------- the game, rebuilt on each update
 
+  /** Rebuild the table, then let every card that moved glide from where it was to its new place. */
   private rebuild(): void {
+    const before = this.cardPlaces();
+    for (const [id, place] of this.carried) if (!before.has(id)) before.set(id, place);
+    this.carried.clear();
+    this.buildScene();
+    this.startGlides(before);
+  }
+
+  /** Where every face-up card is now (world space), by card id. */
+  private cardPlaces(): Map<number, { pos: THREE.Vector3; quat: THREE.Quaternion }> {
+    const places = new Map<number, { pos: THREE.Vector3; quat: THREE.Quaternion }>();
+    // Cards still on their way are measured where they are now, so a new glide carries on from there.
+    this.scene.updateMatrixWorld();
+    const visit = (o: THREE.Object3D) => {
+      const id = o.userData.cardId as number | undefined;
+      if (id !== undefined) places.set(id, { pos: o.getWorldPosition(new THREE.Vector3()), quat: o.getWorldQuaternion(new THREE.Quaternion()) });
+    };
+    this.dynamic.traverse(visit);
+    this.carry?.group.traverse(visit);
+    this.glides = []; // those cards are about to be replaced
+    return places;
+  }
+
+  private startGlides(before: Map<number, { pos: THREE.Vector3; quat: THREE.Quaternion }>): void {
+    const now = this.model?.view;
+    const prev = this.previous?.view;
+    this.scene.updateMatrixWorld();
+    const t0 = this.clock.getElapsedTime();
+    // A card that has just come into my hand from the stock flies in from the top of the stock;
+    // one the player before me has just discarded comes from their hand.
+    const drew = !!now && !!prev && now.handNumber === prev.handNumber && now.stockCount < prev.stockCount && prev.turn.player === now.you;
+    const stock = this.named.get('stock');
+    const discarder = prev && now && prev.turn.player !== now.you && now.pile.length > prev.pile.length ? this.avatars.get(prev.turn.player) : undefined;
+    const pileTop = this.named.get('pile');
+    this.dynamic.traverse((o) => {
+      const id = o.userData.cardId as number | undefined;
+      if (id === undefined || !o.parent) return;
+      let from = before.get(id);
+      if (!from && drew && stock && o.userData.hit?.kind === 'card') from = { pos: stock.getWorldPosition(new THREE.Vector3()), quat: stock.getWorldQuaternion(new THREE.Quaternion()) };
+      if (!from && discarder && o === pileTop) {
+        const pos = discarder.root.localToWorld(new THREE.Vector3(0, 0.95, 0.28));
+        from = { pos, quat: discarder.root.getWorldQuaternion(new THREE.Quaternion()) };
+      }
+      if (!from) return;
+      const to = o.getWorldPosition(new THREE.Vector3());
+      if (to.distanceTo(from.pos) < 0.01) return;
+      const parentQuat = o.parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+      this.glides.push({
+        obj: o,
+        fromPos: o.parent.worldToLocal(from.pos.clone()),
+        fromQuat: parentQuat.clone().multiply(from.quat),
+        toPos: o.position.clone(),
+        toQuat: o.quaternion.clone(),
+        t0,
+      });
+    });
+    this.moveGlides(t0);
+  }
+
+  /** Move gliding cards along (ease-out, about a third of a second). */
+  private moveGlides(t: number): void {
+    this.glides = this.glides.filter((g) => {
+      const k = Math.min(1, (t - g.t0) / GLIDE_S);
+      const e = 1 - (1 - k) ** 3;
+      g.obj.position.lerpVectors(g.fromPos, g.toPos, e);
+      g.obj.quaternion.slerpQuaternions(g.fromQuat, g.toQuat, e);
+      return k < 1;
+    });
+  }
+
+  /** Put every gliding card at its final place at once (before measuring positions, and for tests). */
+  private finishGlides(): void {
+    for (const g of this.glides) {
+      g.obj.position.copy(g.toPos);
+      g.obj.quaternion.copy(g.toQuat);
+    }
+    this.glides = [];
+  }
+
+  private buildScene(): void {
     const m = this.model;
     disposeObject(this.dynamic);
     this.dynamic.clear();
@@ -433,7 +529,9 @@ export class Table3D {
       transparent: !!opts.ghost,
       opacity: opts.ghost ? 0.8 : 1,
     });
-    return new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_H), mat);
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_H), mat);
+    if (id !== null) mesh.userData.cardId = id;
+    return mesh;
   }
 
   /** A card lying face up on the table, its top edge pointing away from the player. */
@@ -937,6 +1035,14 @@ export class Table3D {
     const c = this.carry;
     if (!c) return;
     const target = this.dropTarget();
+    // Remember where the carried cards were let go, so they glide from there to their place.
+    if (target) {
+      this.scene.updateMatrixWorld();
+      c.group.traverse((o) => {
+        const id = o.userData.cardId as number | undefined;
+        if (id !== undefined) this.carried.set(id, { pos: o.getWorldPosition(new THREE.Vector3()), quat: o.getWorldQuaternion(new THREE.Quaternion()) });
+      });
+    }
     this.scene.remove(c.group);
     disposeObject(c.group);
     this.carry = null;
@@ -1162,6 +1268,7 @@ export class Table3D {
       this.drawHandJoints();
       this.pokeHands();
     }
+    this.moveGlides(t);
     this.updateCarry();
     this.animateAvatars(t);
     const eye = (this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera).getWorldPosition(new THREE.Vector3());
