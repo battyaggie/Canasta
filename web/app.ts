@@ -74,6 +74,13 @@ function safeGet(key: string): string | null {
     return null;
   }
 }
+function safeRemove(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* private mode etc. */
+  }
+}
 function safeSet(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
@@ -205,6 +212,7 @@ async function joinOnline(code: string, name: string, tokenFromLink?: string): P
   try {
     const res = await fetch(`/api/room/${code}`);
     if (res.status === 404) {
+      if (safeGet('canasta.lastRoom') === code) safeRemove('canasta.lastRoom');
       form.error = `There is no table with the code ${code}.`;
       return render();
     }
@@ -215,6 +223,8 @@ async function joinOnline(code: string, name: string, tokenFromLink?: string): P
   isLocal = false;
   roomCode = code;
   if (tokenFromLink) safeSet(`canasta.token.${code}`, tokenFromLink);
+  // Remembered so the start page can offer "Rejoin your game" if the page is closed by mistake.
+  safeSet('canasta.lastRoom', code);
   history.replaceState(null, '', `?room=${code}`);
   if (name) safeSet('canasta.name', name);
   openTransport(
@@ -505,6 +515,24 @@ function renderHome(): HTMLElement {
     h('h1', {}, 'Canasta'),
     h('p', { class: 'tagline' }, 'Play with friends and family, online or around one device.'),
     form.error ? h('p', { class: 'form-error', role: 'alert' }, form.error) : null,
+
+    // Closed the page by mistake? This device still holds its seat at the last online table.
+    (() => {
+      const last = safeGet('canasta.lastRoom');
+      if (linkCode || !last || !safeGet(`canasta.token.${last}`)) return null;
+      return h(
+        'section',
+        { class: 'panel rejoin', id: 'rejoin-panel' },
+        h('h2', {}, 'Your online game'),
+        h('p', {}, 'Table ', h('strong', { class: 'rejoin-code' }, last)),
+        h(
+          'div',
+          { class: 'row buttons' },
+          h('button', { id: 'rejoin', class: 'primary', onclick: () => void joinOnline(last, form.name.trim()) }, 'Rejoin your game'),
+          h('button', { id: 'forget-last', onclick: () => (safeRemove('canasta.lastRoom'), render()) }, 'Forget it'),
+        ),
+      );
+    })(),
 
     h('section', { class: 'panel' }, h('h2', {}, 'Your name'), nameInput),
 
@@ -888,7 +916,7 @@ function renderGame(): HTMLElement {
       'header',
       { class: 'topbar' },
       h('span', { class: 'brand' }, 'Canasta'),
-      isLocal ? h('span', { class: 'tag' }, vsComputer() ? 'vs computer' : 'pass & play') : h('span', { class: 'tag', id: 'room-code' }, info.code),
+      isLocal ? h('span', { class: 'tag' }, vsComputer() ? 'vs computer' : 'pass & play') : h('span', { class: 'tag table-code', id: 'room-code', title: 'Give this code to anyone who needs to join or rejoin' }, `Table ${info.code}`),
       isLocal ? null : h('span', { class: 'tag' }, info.settings.mode === 'live' ? 'Live' : 'Take turns'),
       !isLocal && info.settings.mode === 'async' && info.lastMoveAt ? h('span', { class: 'muted small' }, `last move ${timeAgo(info.lastMoveAt)}`) : null,
       h('span', { class: 'spacer' }),
@@ -1048,6 +1076,7 @@ function render3dControls(): HTMLElement {
   return h(
     'div',
     { class: 'three-controls' },
+    isLocal || !room ? null : h('span', { class: 'tag table-code', id: 'room-code-3d' }, `Table ${room.code}`),
     view ? h('p', { class: `three-hint${view.turn.player === you ? ' mine' : ''}`, id: 'hint', 'aria-live': 'polite' }, hintText()) : null,
     micButton(),
     xr.vr ? h('button', { class: 'primary', id: 'enter-vr', onclick: () => void table3d?.enterXR('immersive-vr').catch(() => showToast('Could not start the headset view.')) }, 'Enter VR') : null,
@@ -1135,7 +1164,7 @@ function tableModel(): TableModel {
     canAddToMelds: myPlay,
     canSkipDiscard: myPlay && v.myHand.length === 1 && !v.sides[mySide as 0 | 1].melds.some(isCanasta),
     canLookThrough: info.settings.mode === 'async',
-    scoreLine: order.map((s) => `${sideLabel(s)} ${v.scores[s as 0 | 1].toLocaleString('en')}`).join('   ·   '),
+    scoreLine: (isLocal ? '' : `Table ${info.code}   ·   `) + order.map((s) => `${sideLabel(s)} ${v.scores[s as 0 | 1].toLocaleString('en')}`).join('   ·   '),
     hint: hintText(),
     toast: toastText,
     connection: status !== 'open' && !isLocal ? (status === 'connecting' ? 'Connecting…' : 'Reconnecting…') : null,
