@@ -248,7 +248,7 @@ export class GameRoom {
   /** 'save': the saved room data changed; 'broadcast': only who-is-here changed; 'none': nothing to tell everyone. */
   private handle(room: Room, ws: WS, msg: ClientMsg): 'save' | 'broadcast' | 'none' {
     if (msg.t === 'hello') {
-      const { seat, token } = room.join(msg.name, msg.token);
+      const { seat, token } = room.join(msg.name, msg.token, msg.figure);
       ws.serializeAttachment({ seat, voice: false });
       this.send(ws, { t: 'welcome', seat, token });
       return 'save'; // a new player may have taken a seat

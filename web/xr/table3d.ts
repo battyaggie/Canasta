@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { ALL_CARDS, isCanasta, isNaturalCanasta, isWild, sideOf, type MeldPlay, type PlayerView } from '../../engine/src/index.js';
 import { Person, type Look } from './people.js';
+import type { Figure } from '../../shared/protocol.js';
 import { handGroup } from '../cardview.js';
 import { CARD_H, CARD_W, cardBack, cardFace, disposeObject, textPanel } from './text.js';
 
@@ -12,6 +13,8 @@ export interface TableModel {
   view: PlayerView;
   seatNames: string[];
   seatOnline: boolean[];
+  /** The figure each player chose for the 3D table (a man or a woman), if they chose one. */
+  seatFigures?: (Figure | undefined)[];
   /** Hand already sorted the way the 2D app shows it, without staged cards. */
   hand: number[];
   selected: ReadonlySet<number>;
@@ -91,6 +94,8 @@ interface AvatarParts {
   reach: { to: THREE.Vector3; start: number } | null;
   /** The ready-made person, once its model has loaded; until then (or if it can't load) the simple figure shows. */
   person: Person | null;
+  /** Which model this seat shows: the player's own choice, or the seat's default. */
+  build: Figure;
   /** The simple figure's parts, hidden once the person is there. */
   simple: THREE.Object3D[];
   online: boolean;
@@ -229,6 +234,8 @@ export class Table3D {
         return this.named.get(name)?.getWorldPosition(new THREE.Vector3()).toArray() ?? null;
       },
       presenting: () => this.renderer.xr.isPresenting,
+      /** Which figure (man or woman) each other seat shows, and whether the model has loaded. */
+      figures: () => [...this.avatars].map(([seat, av]) => ({ seat, build: av.build, loaded: !!av.person })),
       /** What a click at this screen point would hit (tests). */
       at: (x: number, y: number) => {
         this.finishGlides();
@@ -688,8 +695,17 @@ export class Table3D {
       const seat = (v.you + rel) % n;
       keep.add(seat);
       let av = this.avatars.get(seat);
+      const look = LOOKS[seat % LOOKS.length]!;
+      const build = m.seatFigures?.[seat] ?? look.person.build;
+      if (av && av.build !== build) {
+        // The player chose the other figure: seat a new one.
+        this.tableRoot.remove(av.root);
+        disposeObject(av.root);
+        this.avatars.delete(seat);
+        av = undefined;
+      }
       if (!av) {
-        av = this.makeAvatar(LOOKS[seat % LOOKS.length]!);
+        av = this.makeAvatar(look, build);
         this.avatars.set(seat, av);
         this.tableRoot.add(av.root);
       }
@@ -776,7 +792,7 @@ export class Table3D {
     this.fadeAvatar(av);
   }
 
-  private makeAvatar(look: (typeof LOOKS)[number]): AvatarParts {
+  private makeAvatar(look: (typeof LOOKS)[number], build: Figure): AvatarParts {
     const root = new THREE.Group();
     const body = new THREE.Group();
     root.add(body);
@@ -871,9 +887,9 @@ export class Table3D {
     back.position.set(0, 0.72, -0.27);
     root.add(seat, back);
     const simple = root.children.filter((o) => o !== seat && o !== back);
-    const av: AvatarParts = { root, body, head, left, right, arms, elbows, eyes, mouth, nextBlink: Math.random() * 4, reach: null, person: null, simple, online: true };
+    const av: AvatarParts = { root, body, head, left, right, arms, elbows, eyes, mouth, nextBlink: Math.random() * 4, reach: null, person: null, build, simple, online: true };
     this.poseArms(av);
-    void this.addPerson(av, look.person);
+    void this.addPerson(av, { ...look.person, build });
     return av;
   }
 

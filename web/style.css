@@ -338,3 +338,6 @@ html.xr { font-size: 20px; }
   max-width: min(520px, calc(100vw - 32px)); padding: 6px 12px; border-radius: 8px;
   background: #2f8fe0; color: #fff; font-size: 0.85rem; text-align: center; pointer-events: none;
 }
+
+/* "At the 3D table, show me as": on its own line under the name. */
+.figure-choice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
