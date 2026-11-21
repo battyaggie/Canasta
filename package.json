@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Online Canasta for 2 or 4 players, live or turn-based. Cloudflare Durable Objects + a plain TypeScript web client.",
   "scripts": {
-    "test": "tsx --test engine/test/*.test.ts server/test/*.test.ts",
+    "test": "tsx --test engine/test/*.test.ts server/test/*.test.ts web/test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:web": "node scripts/build-web.mjs",
     "dev": "npm run build:web && wrangler dev",

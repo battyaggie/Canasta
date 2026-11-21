@@ -47,6 +47,7 @@ try {
 
   await click('stock');
   await eventually(async () => (await hand()).length, (n) => n === 16, 'clicking the stock draws a card');
+  check((await names()).filter((n) => n.startsWith('new:')).length === 1, 'the card just drawn is marked as new');
 
   const aces = (await hand()).filter((id) => ALL_CARDS[id].rank === 'A').slice(0, 3);
   for (const id of aces) await click(`card:${id}`);
