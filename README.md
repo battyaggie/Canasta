@@ -71,10 +71,10 @@ player. It works with a mouse or touch on any screen, and in a headset:
 1. Open your game's **https** address in the Quest Browser (WebXR only runs on https, or on `localhost`).
 2. Join or start a game as usual, press **3D table**, then **Enter VR**.
 3. **Controllers:** point and pull the trigger. **Hands:** point and pinch, or touch a card in your hand with your fingertip.
-4. **Carry cards:** pick some cards, then hold the trigger or pinch (or squeeze the grip) on one of them and move: they come along. Let go over the table to lay them down as a new meld, over one of your melds to add to it, or over the pile to discard. With a mouse, drag a card out of your hand.
    - Stock: draw. Pile: take it before you draw, discard onto it after you draw (select one card first).
    - Cards in your hand: select. The cloth in front of you: set the selected cards aside for a meld. **Lay down**: send them.
    - A meld of yours, then cards: add those cards to it.
+4. **Carry cards:** pick some cards, then hold the trigger or pinch (or squeeze the grip) on one of them and move: they come along. Let go over the table to lay them down as a new meld, over one of your melds to add to it, or over the pile to discard. With a mouse, drag a card out of your hand.
 4. **Recentre** puts the table in front of you again. **Leave headset view** goes back to the screen.
 
 Everyone at an online table can choose their own view: one person in a headset, the others on phones with the normal app.
