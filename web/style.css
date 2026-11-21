@@ -260,3 +260,43 @@ button.card:hover:not(:disabled) { background: #fff6d6; transform: translateY(-4
 }
 
 @media (prefers-reduced-motion: reduce) { .card { transition: none; } }
+
+/* ---------- headset browsers (Meta Quest) ----------
+   app.ts adds .xr to <html> in Quest Browser (or with ?xr=1 for trying it on a Mac).
+   The page floats as a window a metre or two away and is aimed at with a controller ray
+   or a pinch, so everything is bigger, and nothing moves under the pointer on hover. */
+html.xr { font-size: 20px; }
+.xr body { font-size: 20px; }
+.xr { --card-w: 84px; --card-h: 118px; }
+.xr .game { max-width: 1500px; }
+.xr .home { max-width: 720px; }
+.xr button { min-height: 60px; padding: 0.6rem 1.1rem; border-width: 2px; }
+.xr .small-btn { min-height: 52px; min-width: 72px; font-size: 1rem; }
+.xr input, .xr select { min-height: 60px; font-size: 20px; }
+.xr .card .rank { font-size: 1.7rem; }
+.xr .card .suit { font-size: 1.7rem; }
+.xr .card .suit.joker { font-size: 0.7rem; }
+.xr .card.small { width: 46px; height: 64px; }
+.xr .card.small .rank, .xr .card.small .suit { font-size: 1rem; }
+.xr .hand { gap: 10px; padding-top: 22px; }
+.xr .melds { gap: 12px; }
+.xr .meld { padding: 8px 10px; border-width: 3px; }
+.xr .meld-cards .card { margin-right: -20px; }
+.xr .meld-title { font-size: 1rem; }
+.xr .chip { padding: 8px 14px; }
+.xr .pile-all summary { padding: 10px; }
+/* Hover: a ring instead of a lift, so the card under the ray does not jump away from it. */
+.xr button.card:hover:not(:disabled) { transform: none; outline: 4px solid rgba(255,255,255,0.85); outline-offset: 2px; }
+.xr button:hover:not(:disabled):not(.card) { outline: 3px solid rgba(255,255,255,0.7); }
+.xr .card.selected { transform: translateY(-18px); outline: 5px solid var(--accent); }
+/* The window is short (about 720 px), so the hand and buttons stay at the bottom like on a phone. */
+.xr .dock {
+  position: sticky; bottom: 0; z-index: 5;
+  margin: 0 -12px; padding: 8px 12px 10px;
+  background: var(--felt-dark);
+  border-top: 1px solid rgba(255,255,255,0.25);
+  box-shadow: 0 -6px 14px rgba(0,0,0,0.4);
+}
+.xr .hint { margin: 0 0 6px; }
+.xr .actions { margin-top: 8px; }
+.xr .actions button { flex: 1 1 150px; }

@@ -905,6 +905,16 @@ window.setInterval(() => {
 
 // ------------------------------------------------------------------ start
 
+// Headset browsers (Meta Quest): bigger cards and buttons for pointing with a controller or a hand.
+// ?xr=1 turns it on anywhere (to try it on a Mac), ?xr=0 turns it off; the choice is remembered.
+(function headsetMode() {
+  const q = new URLSearchParams(location.search).get('xr');
+  if (q === '1' || q === '0') safeSet('canasta.xr', q);
+  const saved = safeGet('canasta.xr');
+  const quest = /OculusBrowser|Quest/i.test(navigator.userAgent);
+  if (saved === '1' || (saved !== '0' && quest)) document.documentElement.classList.add('xr');
+})();
+
 (function init() {
   const params = new URLSearchParams(location.search);
   const code = (params.get('room') ?? '').toUpperCase();
