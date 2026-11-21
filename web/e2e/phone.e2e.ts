@@ -79,7 +79,7 @@ try {
 
     // The browser throws the page away (low memory, tab switch): the game must come back.
     await page.tap('#draw');
-    const before = await page.locator('#hand .card').evaluateAll((els: Element[]) => els.map((e) => e.getAttribute('aria-label')).join('|'));
+    const before = await page.locator('#hand .card').evaluateAll((els: Element[]) => els.map((e) => (e.getAttribute('aria-label') ?? '').replace(' (new)', '')).join('|'));
     await page.goto(`http://localhost:${PORT}/`);
     check((await page.locator('#resume').count()) === 1, 'after a reload the home page offers to resume the game');
     await page.screenshot({ path: `${SHOTS}/p-${slug}-4-resume.png`, fullPage: true });

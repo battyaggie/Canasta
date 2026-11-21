@@ -178,6 +178,14 @@ input, select {
 .card .suit.joker { font-size: 0.6rem; letter-spacing: 0.05em; }
 .card.wild { background: #fff6d6; border-color: var(--gold); }
 button.card:hover:not(:disabled) { background: #fff6d6; transform: translateY(-4px); }
+/* A card that just came into your hand this turn: blue outline and a small "new" tag. */
+.card.fresh { outline: 3px solid #2f8fe0; outline-offset: 1px; }
+.card.fresh::after {
+  content: 'new'; position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+  background: #2f8fe0; color: #fff; font-size: 0.62rem; font-weight: 700; line-height: 1; padding: 2px 4px; border-radius: 4px;
+}
+/* Black threes and wild cards sit a little apart from the ordinary cards. */
+.hand .card.group-start { margin-left: 14px; }
 .card.selected { transform: translateY(-14px); outline: 3px solid var(--accent); background: #fff3c2; }
 /* Small cards put rank and suit in the top-left corner so they stay readable when overlapped. */
 .card.small { width: 34px; height: 48px; border-radius: 5px; justify-content: flex-start; align-items: flex-start; padding: 3px 0 0 5px; }

@@ -11,5 +11,5 @@
     "types": []
   },
   "include": ["engine/src", "shared", "server/room.ts", "server/worker.ts", "web"],
-  "exclude": ["web/e2e"]
+  "exclude": ["web/e2e", "web/test"]
 }
