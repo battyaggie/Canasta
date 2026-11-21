@@ -29,7 +29,10 @@ self.addEventListener('fetch', (event) => {
       const hit = await cache.match(key, { ignoreSearch: true });
       if (hit) return hit;
       try {
-        return await fetch(req);
+        const res = await fetch(req);
+        // The 3D table's people are not in the install list; keep them once fetched.
+        if (res.ok && url.pathname.startsWith('/avatars/')) await cache.put(req, res.clone());
+        return res;
       } catch {
         return (await cache.match('/', { ignoreSearch: true })) ?? Response.error();
       }
