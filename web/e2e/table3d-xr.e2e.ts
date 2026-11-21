@@ -75,6 +75,12 @@ try {
     await page.waitForTimeout(150);
   }
 
+  // Nothing in my hand may hide the middle of the table from my eyes.
+  for (const thing of ['stock', 'pile']) {
+    const seen = await page.evaluate((n: string) => (window as any).__canasta3d.seenFirst(n), thing);
+    check(seen === thing, `in the headset the ${thing} is not hidden behind the cards in my hand (eye sees: ${seen})`);
+  }
+
   const start = (await hand()).length;
   await pointAndSelect('stock', 'controller');
   await eventually(async () => (await hand()).length, (n) => n === start + 1, 'controller: pointing at the stock and pulling the trigger draws a card');

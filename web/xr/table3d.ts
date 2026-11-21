@@ -192,6 +192,16 @@ export class Table3D {
       names: () => [...this.named.keys()],
       world: (name: string) => this.named.get(name)?.getWorldPosition(new THREE.Vector3()).toArray() ?? null,
       presenting: () => this.renderer.xr.isPresenting,
+      /** What the player's eye sees first when looking at a named thing (tests: is it hidden behind the hand?). */
+      seenFirst: (name: string) => {
+        const obj = this.named.get(name);
+        if (!obj) return null;
+        const eye = (this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera).getWorldPosition(new THREE.Vector3());
+        const target = obj.getWorldPosition(new THREE.Vector3());
+        this.raycaster.set(eye, target.sub(eye).normalize());
+        const first = this.raycaster.intersectObjects(this.hits, false)[0]?.object;
+        return first ? ([...this.named].find(([, o]) => o === first)?.[0] ?? (first.userData.hit as Hit).kind) : null;
+      },
     };
   }
 
@@ -346,7 +356,7 @@ export class Table3D {
     if (this.session) buttons.push(['Leave headset view', 'exit', () => void this.session?.end()]);
     buttons.forEach(([label, name, run], i) => {
       const b = textPanel(label, { width: 0.17, height: 0.045, size: 0.02, bold: true, bg: name === 'layDown' ? '#e0b22e' : 'rgba(240,240,240,0.95)', fg: '#111' });
-      if (this.session) b.position.set(0.4, 1.0 - i * 0.055, -0.3);
+      if (this.session) b.position.set(0.44, 0.9 - i * 0.055, -0.14);
       else b.position.set(0.42, 0.86 - i * 0.055, -0.12);
       b.rotation.set(-0.35, -0.45, 0, 'YXZ');
       this.addHit(b, { kind: 'button', run }, `button:${name}`);
@@ -479,9 +489,11 @@ export class Table3D {
   private buildHand(m: TableModel): void {
     const group = new THREE.Group();
     // In a headset the fan floats in front of you like a held hand; on a screen it lies lower, at the table's edge.
+    // In a headset the hand rests low, just above the table edge and tilted towards your face, so the
+    // stock, pile and melds stay visible above it: glance down at your cards, look up at the table.
     if (this.session) {
-      group.position.set(0, 0.95, -0.3);
-      group.rotation.x = -0.75;
+      group.position.set(0, 0.84, -0.12);
+      group.rotation.x = -0.95;
     } else {
       group.position.set(0, 0.8, -0.06);
       group.rotation.x = -1.0;
