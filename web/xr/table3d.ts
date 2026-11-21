@@ -25,6 +25,8 @@ export interface TableModel {
   /** Pass & play: whose turn it is while the cards are hidden. */
   coveredFor: string | null;
   overlay: { title: string; lines: string[]; button: 'nextHand' | 'rematch' | null } | null;
+  /** Voice chat button label (online tables only). */
+  mic?: string | null;
 }
 
 export interface TableActions {
@@ -41,6 +43,7 @@ export interface TableActions {
   rematch(): void;
   closeOverlay(): void;
   exit(): void;
+  toggleMic?(): void;
 }
 
 type Hit =
@@ -355,6 +358,7 @@ export class Table3D {
     if (myPlay && (m.selected.size > 0 || stagedCount > 0)) buttons.push([stagedCount ? `Lay down (${stagedCount})` : 'Lay down', 'layDown', () => this.actions.layDown()]);
     if (m.selected.size > 0 || stagedCount > 0 || m.target) buttons.push(['Clear', 'clear', () => this.actions.clear()]);
     if (m.canSkipDiscard) buttons.push(['Skip discard', 'skip', () => this.actions.skipDiscard()]);
+    if (m.mic) buttons.push([m.mic, 'mic', () => this.actions.toggleMic?.()]);
     if (this.session) buttons.push(['Recentre', 'recentre', () => (this.needsRecentre = true)]);
     if (this.session) buttons.push(['Leave headset view', 'exit', () => void this.session?.end()]);
     buttons.forEach(([label, name, run], i) => {

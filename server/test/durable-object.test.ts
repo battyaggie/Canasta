@@ -236,8 +236,52 @@ describe('Worker routes', () => {
     assert.equal((await call(e, '/ws/ABCD')).status, 426, 'plain request to the socket route');
   });
 
+  it('hands out STUN servers for voice chat when no TURN key is set', async () => {
+    const res = await call(env(), '/api/ice');
+    const body = (await res.json()) as { iceServers: { urls: string[] }[] };
+    assert.ok(body.iceServers[0]!.urls.some((u) => u.startsWith('stun:')));
+  });
+
   it('serves everything else from the static assets', async () => {
     const res = await call(env(), '/style.css');
     assert.equal(await res.text(), 'asset:/style.css');
+  });
+  it('voice chat: shows who is in voice and passes call setup only to the right player', async () => {
+    const { room, state } = newRoom();
+    await init(room, 4);
+    const a = await sit(room, state, 'Anna');
+    const b = await sit(room, state, 'Ben');
+    const c = await sit(room, state, 'Cleo');
+    const saved = JSON.stringify(state.store.get('room'));
+
+    await say(room, a, { t: 'voice', on: true });
+    assert.equal(c.last('update').room.seats[0]!.voice, true, 'everyone sees Anna joined voice');
+    assert.equal(c.last('update').room.seats[1]!.voice, undefined);
+
+    a.clear();
+    b.clear();
+    c.clear();
+    const offer = { s: 'abc123', sdp: { type: 'offer', sdp: 'v=0 fake' } };
+    await say(room, a, { t: 'signal', to: 1, data: offer });
+    assert.deepEqual(b.messages(), [{ t: 'signal', from: 0, data: offer }], 'Ben gets the offer, marked as from Anna');
+    assert.equal(c.sent.length, 0, 'Cleo hears nothing about it');
+    assert.equal(a.sent.length, 0, 'no broadcast for call setup');
+    assert.equal(JSON.stringify(state.store.get('room')), saved, 'voice never changes the saved game');
+
+    await say(room, a, { t: 'signal', to: 3, data: offer });
+    assert.match(a.last('error').message, /not at the table/, 'cannot signal an empty seat');
+    await say(room, a, { t: 'signal', to: 0, data: offer });
+    assert.match(a.last('error').message, /not at the table/, 'cannot signal yourself');
+    await say(room, a, { t: 'signal', to: 1, data: { s: 'x', sdp: { type: 'pranswer', sdp: '' } } });
+    assert.match(a.last('error').message, /Invalid signal/);
+
+    const stranger = new FakeWS();
+    state.acceptWebSocket(stranger);
+    await say(room, stranger, { t: 'signal', to: 0, data: offer });
+    assert.match(stranger.last('error').message, /Join the table first/, 'only seated players can call');
+
+    a.close();
+    await room.webSocketClose(a as never);
+    assert.equal(b.last('update').room.seats[0]!.voice, undefined, 'leaving the table leaves voice too');
   });
 });

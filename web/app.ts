@@ -16,6 +16,7 @@ import type { ClientMsg, Mode, RoomInfo, ServerMsg } from '../shared/protocol.js
 import { cardBack, cardEl, cardLabel, sortHand } from './cardview.js';
 import { h } from './dom.js';
 import { LocalTransport, clearSavedLocal, loadSavedLocal, type Status, type Transport, WsTransport } from './transport.js';
+import { Voice } from './voice.js';
 import type { Table3D, TableActions, TableModel } from './xr/table3d.js';
 
 // ------------------------------------------------------------------ state
@@ -36,6 +37,10 @@ let overlayOpen = false;
 let lastOverlayKey = '';
 let toastText: string | null = null;
 let toastTimer: number | undefined;
+/** Voice chat at an online table (null in pass & play and against the computer). */
+let voice: Voice | null = null;
+/** Voice starts by itself once per table at live tables; after that only the mic button starts it. */
+let voiceAutoTried = false;
 
 const selected = new Set<number>();
 let staged: MeldPlay[] = [];
@@ -103,6 +108,11 @@ function handleMessage(msg: ServerMsg): void {
   if (msg.t === 'welcome') {
     joined = true;
     if (!isLocal) safeSet(`canasta.token.${roomCode}`, msg.token);
+    voice?.rejoined();
+    return;
+  }
+  if (msg.t === 'signal') {
+    voice?.handleSignal(msg.from, msg.data);
     return;
   }
   if (msg.t === 'error') {
@@ -118,6 +128,14 @@ function handleMessage(msg: ServerMsg): void {
   you = msg.you;
   room = msg.room;
   view = msg.view;
+  if (voice) {
+    voice.update(you, room);
+    // Live tables: join the voice chat straight away (the browser asks once for the microphone).
+    if (!voiceAutoTried && room.settings.mode === 'live' && safeGet('canasta.voice') !== 'off') {
+      voiceAutoTried = true;
+      void voice.start();
+    }
+  }
   // Pass & play: hide the cards whenever the turn moves to someone else, and at the start of each hand.
   // Not against the computer: there is only one person at the screen.
   if (isLocal && !vsComputer() && view?.status === 'playing' && (previousSeat !== you || previousStatus !== 'playing')) covered = true;
@@ -145,6 +163,7 @@ function openTransport(
   t: (events: { onMessage: typeof handleMessage; onStatus: (s: Status) => void; onNote: (text: string) => void }) => Transport,
 ): void {
   resetGameState();
+  stopVoice();
   transport?.close();
   transport = t({
     onMessage: handleMessage,
@@ -185,6 +204,9 @@ async function joinOnline(code: string, name: string, tokenFromLink?: string): P
         return { t: 'hello', token, name: name || safeGet('canasta.name') || undefined };
       }),
   );
+  voice = new Voice(send, render, showSpeaking);
+  voiceAutoTried = false;
+  (window as unknown as { canastaVoice?: Voice }).canastaVoice = voice; // lets the browser tests look inside
   render();
 }
 
@@ -227,6 +249,7 @@ const vsComputer = (): boolean => isLocal && !!room?.settings.bots?.length;
 
 function leave(): void {
   exit3d(false);
+  stopVoice();
   transport?.close();
   transport = null;
   resetGameState();
@@ -237,6 +260,60 @@ function leave(): void {
 }
 
 const send = (msg: ClientMsg): void => transport?.send(msg);
+
+// ------------------------------------------------------------------ voice chat
+
+function stopVoice(): void {
+  voice?.close();
+  voice = null;
+}
+
+/** The microphone button: join voice, mute, unmute, or explain why it is not working. */
+function tapMic(): void {
+  if (!voice) return;
+  if (voice.state === 'off') {
+    safeSet('canasta.voice', 'on');
+    void voice.start();
+  } else if (voice.state === 'blocked') {
+    showToast('The microphone is blocked. Allow it for this site in the browser settings, then tap the button again.');
+    void voice.start();
+  } else voice.toggleMute();
+}
+
+function micLabel(): string | null {
+  if (!voice) return null;
+  if (voice.needsTap) return '🔈 Tap to hear the others';
+  switch (voice.state) {
+    case 'off':
+      return '🎤 Join voice chat';
+    case 'starting':
+      return '🎤 Starting…';
+    case 'on':
+      return '🎤 Mic on';
+    case 'muted':
+      return '🔇 Muted';
+    case 'blocked':
+      return '🎤 Microphone off';
+  }
+}
+
+function micButton(): HTMLElement | null {
+  const label = micLabel();
+  if (!label) return null;
+  const state = voice!.state;
+  const title = state === 'on' ? 'Tap to mute your microphone' : state === 'muted' ? 'Tap to let the others hear you again' : 'Talk to the other players';
+  return h('button', { class: `small-btn mic mic-${voice!.needsTap ? 'tap' : state}`, id: 'mic', title, 'aria-pressed': String(state === 'on'), onclick: tapMic }, label);
+}
+
+/** Light up the name of whoever is talking, without redrawing the whole screen. */
+function showSpeaking(speaking: ReadonlySet<number>): void {
+  document.querySelectorAll<HTMLElement>('[data-seat]').forEach((el) => {
+    el.classList.toggle('speaking', speaking.has(Number(el.dataset.seat)));
+  });
+}
+
+const voiceTag = (seat: number): HTMLElement | null =>
+  !isLocal && room?.seats[seat]?.voice && room.seats[seat]?.connected ? h('span', { class: 'tag voice', title: 'in the voice chat' }, '🎤') : null;
 
 // ------------------------------------------------------------------ meld building
 
@@ -579,8 +656,9 @@ function renderLobby(): HTMLElement {
     const team = players === 4 ? (seat % 2 === 0 ? 'Team 1' : 'Team 2') : '';
     return h(
       'li',
-      { class: s ? 'seat taken' : 'seat' },
+      { class: `${s ? 'seat taken' : 'seat'}${voice?.speaking.has(seat) ? ' speaking' : ''}`, 'data-seat': String(seat) },
       h('span', { class: 'seat-name' }, s ? s.name : 'Waiting for a player…'),
+      voiceTag(seat),
       seat === you ? h('span', { class: 'tag' }, 'you') : null,
       seat === 0 ? h('span', { class: 'tag' }, 'host') : null,
       team ? h('span', { class: 'tag team' }, team) : null,
@@ -597,6 +675,7 @@ function renderLobby(): HTMLElement {
       { class: 'panel lobby' },
       h('p', { class: 'muted' }, 'Table code'),
       h('div', { class: 'big-code', id: 'table-code' }, info.code),
+      voice ? h('div', { class: 'row buttons voice-row' }, micButton()) : null,
       h(
         'p',
         { class: 'muted' },
@@ -744,9 +823,10 @@ function renderGame(): HTMLElement {
     const partner = v.config.players === 4 && seat !== you && sideOf(v.config, seat) === mySide;
     return h(
       'li',
-      { class: `chip${turn ? ' turn' : ''}${seat === you ? ' me' : ''}`, 'data-seat': String(seat) },
+      { class: `chip${turn ? ' turn' : ''}${seat === you ? ' me' : ''}${voice?.speaking.has(seat) ? ' speaking' : ''}`, 'data-seat': String(seat) },
       h('span', { class: `dot${s?.connected || isLocal ? ' on' : ''}`, title: s?.connected ? 'online' : 'offline' }),
       h('span', {}, seatName(seat)),
+      voiceTag(seat),
       seat === you ? h('span', { class: 'tag' }, 'you') : null,
       partner ? h('span', { class: 'tag team' }, 'partner') : null,
       h('span', { class: 'muted small' }, `${v.handSizes[seat]} cards`),
@@ -793,6 +873,7 @@ function renderGame(): HTMLElement {
       !isLocal && info.settings.mode === 'async' && info.lastMoveAt ? h('span', { class: 'muted small' }, `last move ${timeAgo(info.lastMoveAt)}`) : null,
       h('span', { class: 'spacer' }),
       status !== 'open' && !isLocal ? h('span', { class: 'tag off', role: 'status' }, status === 'connecting' ? 'connecting…' : 'reconnecting…') : null,
+      micButton(),
       h('button', { class: 'small-btn', id: 'enter-3d', onclick: () => void enter3d() }, '3D table'),
       h('button', { class: 'small-btn', onclick: () => ((overlayOpen = true), render()) }, 'Scores'),
       h('button', { class: 'small-btn', onclick: leave }, 'Leave'),
@@ -946,6 +1027,7 @@ function render3dControls(): HTMLElement {
     'div',
     { class: 'three-controls' },
     view ? h('p', { class: `three-hint${view.turn.player === you ? ' mine' : ''}`, id: 'hint', 'aria-live': 'polite' }, hintText()) : null,
+    micButton(),
     xr.vr ? h('button', { class: 'primary', id: 'enter-vr', onclick: () => void table3d?.enterXR('immersive-vr').catch(() => showToast('Could not start the headset view.')) }, 'Enter VR') : null,
     h('button', { id: 'exit-3d', onclick: () => exit3d() }, '2D view'),
   );
@@ -1000,6 +1082,7 @@ const tableActions: TableActions = {
     render();
   },
   exit: () => exit3d(),
+  toggleMic: () => tapMic(),
 };
 
 function tableModel(): TableModel {
@@ -1035,6 +1118,7 @@ function tableModel(): TableModel {
     connection: status !== 'open' && !isLocal ? (status === 'connecting' ? 'Connecting…' : 'Reconnecting…') : null,
     coveredFor: isLocal && covered && v.status === 'playing' ? seatName(you) : null,
     overlay,
+    mic: !voice ? null : voice.needsTap ? 'Tap to hear the others' : voice.state === 'on' ? 'Mute my mic' : voice.state === 'muted' ? 'Unmute my mic' : voice.state === 'starting' ? 'Starting voice…' : voice.state === 'blocked' ? 'Microphone off' : 'Join voice chat',
   };
 }
 

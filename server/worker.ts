@@ -3,6 +3,7 @@
 //   POST /api/create        -> makes a room, returns { code }
 //   GET  /api/room/:code    -> { settings, phase, seatsTaken } so the join page can fail early
 //   GET  /ws/:code          -> WebSocket into that room's Durable Object
+//   GET  /api/ice           -> { iceServers } for voice chat (STUN, plus TURN if a key is configured)
 //   everything else         -> the static web app (served from the assets binding)
 //
 // One Durable Object = one table. It keeps the authoritative game state, so
@@ -53,6 +54,9 @@ interface DONamespace {
 interface Env {
   ROOMS: DONamespace;
   ASSETS: { fetch(request: Request): Promise<Response> };
+  /** Optional: a Cloudflare Realtime TURN key, for voice chat on networks that block direct calls. */
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
 }
 declare const WebSocketPair: new () => { 0: WS; 1: WS };
 
@@ -94,6 +98,8 @@ export default {
       return json({ error: 'Could not find a free room code, please try again' }, 500);
     }
 
+    if (path === '/api/ice' && request.method === 'GET') return json({ iceServers: await iceServers(env) });
+
     const info = path.match(/^\/api\/room\/([A-Za-z0-9]{4})$/);
     if (info && request.method === 'GET') {
       const code = info[1]!.toUpperCase();
@@ -111,6 +117,33 @@ export default {
     return env.ASSETS.fetch(request);
   },
 };
+
+// ---- voice chat: how browsers find a way to reach each other -----------------
+
+const STUN = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
+
+/**
+ * STUN lets two browsers find each other's address, which is enough on most home and mobile networks.
+ * Some networks block direct calls; for those a TURN relay passes the sound along. Cloudflare's TURN
+ * service is used only if TURN_KEY_ID and TURN_KEY_API_TOKEN are set (wrangler secrets), and the
+ * credentials it hands out expire after a day.
+ */
+async function iceServers(env: Env): Promise<unknown[]> {
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return STUN;
+  try {
+    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ttl: 86400 }),
+    });
+    if (!res.ok) return STUN;
+    const body = (await res.json()) as { iceServers?: unknown };
+    const list = Array.isArray(body.iceServers) ? body.iceServers : body.iceServers ? [body.iceServers] : [];
+    return list.length ? list : STUN;
+  } catch {
+    return STUN;
+  }
+}
 
 // ---- the Durable Object: one table -------------------------------------------
 
@@ -180,9 +213,9 @@ export class GameRoom {
 
     try {
       const msg = parseClientMsg(data);
-      const changed = this.handle(room, ws, msg);
-      if (changed) await this.save();
-      this.broadcast(room);
+      const outcome = this.handle(room, ws, msg);
+      if (outcome === 'save') await this.save();
+      if (outcome !== 'none') this.broadcast(room);
     } catch (e) {
       if (e instanceof RoomError || e instanceof ProtocolError) this.sendError(ws, e.message);
       else {
@@ -212,13 +245,13 @@ export class GameRoom {
     }
   }
 
-  /** Returns true if the saved room data changed. */
-  private handle(room: Room, ws: WS, msg: ClientMsg): boolean {
+  /** 'save': the saved room data changed; 'broadcast': only who-is-here changed; 'none': nothing to tell everyone. */
+  private handle(room: Room, ws: WS, msg: ClientMsg): 'save' | 'broadcast' | 'none' {
     if (msg.t === 'hello') {
       const { seat, token } = room.join(msg.name, msg.token);
-      ws.serializeAttachment({ seat });
+      ws.serializeAttachment({ seat, voice: false });
       this.send(ws, { t: 'welcome', seat, token });
-      return true; // a new player may have taken a seat
+      return 'save'; // a new player may have taken a seat
     }
 
     const seat = this.seatOf(ws);
@@ -227,16 +260,27 @@ export class GameRoom {
     switch (msg.t) {
       case 'start':
         room.start(seat);
-        return true;
+        return 'save';
       case 'action':
         room.act(seat, msg.action);
-        return true;
+        return 'save';
       case 'nextHand':
         room.nextHand();
-        return true;
+        return 'save';
       case 'rematch':
         room.rematch();
-        return true;
+        return 'save';
+      case 'voice':
+        ws.serializeAttachment({ seat, voice: msg.on });
+        return 'broadcast';
+      case 'signal': {
+        // Pass voice-call setup on to the other player, untouched. Only between seated players.
+        if (msg.to === seat || !room.data.seats[msg.to]) throw new RoomError('That player is not at the table.');
+        for (const s of this.state.getWebSockets()) {
+          if (s !== ws && this.seatOf(s) === msg.to) this.send(s, { t: 'signal', from: seat, data: msg.data });
+        }
+        return 'none';
+      }
     }
   }
 
@@ -245,15 +289,22 @@ export class GameRoom {
     return att && typeof att.seat === 'number' ? att.seat : null;
   }
 
+  private inVoice(ws: WS): boolean {
+    const att = ws.deserializeAttachment() as { voice?: unknown } | null;
+    return !!att && att.voice === true;
+  }
+
   /** Send everyone their own personalised view. `closing` is a socket that is going away. */
   private broadcast(room: Room, closing?: WS): void {
     const sockets = this.state.getWebSockets().filter((s) => s !== closing);
     const connected: boolean[] = [];
+    const voice: boolean[] = [];
     for (const s of sockets) {
       const seat = this.seatOf(s);
       if (seat !== null) connected[seat] = true;
+      if (seat !== null && this.inVoice(s)) voice[seat] = true;
     }
-    const info = room.info(connected);
+    const info = room.info(connected, voice);
     for (const s of sockets) {
       const seat = this.seatOf(s);
       if (seat === null) continue;

@@ -11,7 +11,7 @@
     "dev": "npm run build:web && wrangler dev",
     "deploy": "npm run build:web && wrangler deploy",
     "local": "npm run build:web && node scripts/serve-local.mjs",
-    "e2e": "npm run build:web && tsx web/e2e/passplay.e2e.ts && tsx web/e2e/online.e2e.ts"
+    "e2e": "npm run build:web && tsx web/e2e/passplay.e2e.ts && tsx web/e2e/online.e2e.ts && tsx web/e2e/voice.e2e.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
