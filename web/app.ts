@@ -53,6 +53,17 @@ let target: MeldPlay['rank'] | null = null;
 let table3d: Table3D | null = null;
 /** A new version of the app has arrived; it loads at the start page. */
 let updateReady = false;
+/** The new version's service worker, waiting for the go-ahead. */
+let waitingWorker: ServiceWorker | null = null;
+let applyingUpdate = false;
+
+/** Switch to the new version: let its service worker take over, then reload (or just reload if it already has). */
+function applyUpdate(): void {
+  if (applyingUpdate) return;
+  applyingUpdate = true;
+  if (waitingWorker) waitingWorker.postMessage('skipWaiting');
+  else location.reload();
+}
 let in3d = false;
 let xr = { vr: false, ar: false };
 const host3d = h('div', { class: 'three-host', id: 'three-host' });
@@ -1062,8 +1073,10 @@ async function enter3d(): Promise<void> {
     render();
   } catch (e) {
     in3d = false;
-    showToast('The 3D table could not start on this device.');
     console.error(e);
+    // A new version of the app arrived while this page was open: reload into it (the game comes back).
+    if (updateReady) return applyUpdate();
+    showToast('The 3D table could not start on this device.');
   }
 }
 
@@ -1191,7 +1204,7 @@ function renderCover(): HTMLElement {
 
 function render(): void {
   if (updateReady && !transport && !fatal) {
-    location.reload();
+    applyUpdate();
     return;
   }
   const children: (HTMLElement | null)[] = [];
@@ -1240,18 +1253,32 @@ window.setInterval(() => {
 
 // Offline support: after one visit the app opens without a connection (pass & play needs none).
 if ('serviceWorker' in navigator && !new URLSearchParams(location.search).has('nosw')) {
-  // Automatic updates. A new version takes over as soon as it has downloaded (sw.js skips waiting);
-  // the page then reloads by itself if you are on the start page. During a game a note says that
-  // the new version loads when you go back to the start page, so a game is never interrupted.
+  // Automatic updates. A new version downloads in the background and waits. On the start page the app
+  // lets it take over and reloads straight away; during a game a note says it loads when you go back
+  // to the start page. Until then the game keeps using its own version's files (never a mix of old and new).
   const hadVersion = !!navigator.serviceWorker.controller; // false on the very first visit: nothing to update
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadVersion || updateReady) return;
-    updateReady = true;
-    render();
+    if (applyingUpdate) return location.reload();
+    // An older version of the app took over by itself: the files on this page may no longer match.
+    if (hadVersion && !updateReady) {
+      updateReady = true;
+      render();
+    }
   });
   navigator.serviceWorker
     .register('/sw.js')
     .then((reg) => {
+      const waitingNow = () => {
+        if (!navigator.serviceWorker.controller || !reg.waiting || updateReady) return;
+        waitingWorker = reg.waiting;
+        updateReady = true;
+        render();
+      };
+      waitingNow();
+      reg.addEventListener('updatefound', () => {
+        const next = reg.installing;
+        next?.addEventListener('statechange', () => next.state === 'installed' && waitingNow());
+      });
       // Headsets and phones keep a tab open for days: look for a new version whenever the app comes back to the front.
       const check = () => void reg.update().catch(() => {});
       document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && check());

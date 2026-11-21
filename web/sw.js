@@ -4,8 +4,14 @@ const BUILD = '__BUILD__';
 const FILES = __FILES__;
 const CACHE = `canasta-${BUILD}`;
 
+// A new version waits until the page says it may take over (on the start page, see app.ts). Until then
+// an open game keeps getting its own version's files, so old and new files are never mixed.
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)));
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data === 'skipWaiting') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
