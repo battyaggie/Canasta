@@ -304,6 +304,8 @@ function tapMic(): void {
   if (voice.state === 'off') {
     safeSet('canasta.voice', 'on');
     void voice.start();
+  } else if (voice.state === 'starting') {
+    void voice.start(true);
   } else if (voice.state === 'blocked') {
     showToast('The microphone is blocked. Allow it for this site in the browser settings, then tap the button again.');
     void voice.start();
@@ -317,7 +319,7 @@ function micLabel(): string | null {
     case 'off':
       return '🎤 Join voice chat';
     case 'starting':
-      return '🎤 Starting…';
+      return voice.stuck ? '🎤 Tap to turn on voice' : '🎤 Starting…';
     case 'on':
       return '🎤 Mic on';
     case 'muted':
@@ -332,7 +334,7 @@ function micButton(): HTMLElement | null {
   if (!label) return null;
   const state = voice!.state;
   const title = state === 'on' ? 'Tap to mute your microphone' : state === 'muted' ? 'Tap to let the others hear you again' : 'Talk to the other players';
-  return h('button', { class: `small-btn mic mic-${voice!.needsTap ? 'tap' : state}`, id: 'mic', title, 'aria-pressed': String(state === 'on'), onclick: tapMic }, label);
+  return h('button', { class: `small-btn mic mic-${voice!.needsTap || voice!.stuck ? 'tap' : state}`, id: 'mic', title, 'aria-pressed': String(state === 'on'), onclick: tapMic }, label);
 }
 
 /** Light up the name of whoever is talking, without redrawing the whole screen. */
@@ -1170,7 +1172,7 @@ function tableModel(): TableModel {
     connection: status !== 'open' && !isLocal ? (status === 'connecting' ? 'Connecting…' : 'Reconnecting…') : null,
     coveredFor: isLocal && covered && v.status === 'playing' ? seatName(you) : null,
     overlay,
-    mic: !voice ? null : voice.needsTap ? 'Tap to hear the others' : voice.state === 'on' ? 'Mute my mic' : voice.state === 'muted' ? 'Unmute my mic' : voice.state === 'starting' ? 'Starting voice…' : voice.state === 'blocked' ? 'Microphone off' : 'Join voice chat',
+    mic: !voice ? null : voice.needsTap ? 'Tap to hear the others' : voice.state === 'on' ? 'Mute my mic' : voice.state === 'muted' ? 'Unmute my mic' : voice.state === 'starting' ? (voice.stuck ? 'Tap to turn on voice' : 'Starting voice…') : voice.state === 'blocked' ? 'Microphone off' : 'Join voice chat',
   };
 }
 

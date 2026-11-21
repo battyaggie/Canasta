@@ -61,6 +61,10 @@ export class Voice {
   private localMeter: Meter | null = null;
   private meterTimer: number | undefined;
   private callTimer: number | undefined;
+  private attempts = 0;
+  private stuckTimer: number | undefined;
+  /** Still waiting for the microphone after a few seconds: probably needs a tap to ask. */
+  stuck = false;
   private host: HTMLElement;
   private closed = false;
   private unlock = () => this.retryPlayback();
@@ -89,22 +93,37 @@ export class Voice {
   }
 
   /** Turn the microphone on and join the table's voice chat. Asks for microphone permission the first time. */
-  async start(): Promise<void> {
-    if (this.closed || this.active || this.state === 'starting') return;
+  async start(again = false): Promise<void> {
+    if (this.closed || this.active || (this.state === 'starting' && !again)) return;
     if (!voiceSupported()) {
       this.setState('blocked');
       return;
     }
+    // Some browsers (headsets in particular) only show the microphone question after a tap on the page.
+    // If nothing has happened after a few seconds, the button says "Tap to turn on voice" and a tap
+    // asks again, this time from the tap itself.
+    const attempt = ++this.attempts;
+    this.stuck = false;
+    window.clearTimeout(this.stuckTimer);
+    this.stuckTimer = window.setTimeout(() => {
+      if (this.state === 'starting' && attempt === this.attempts) {
+        this.stuck = true;
+        this.onChange();
+      }
+    }, 4000);
     this.setState('starting');
     try {
       const [stream, ice] = await Promise.all([
         navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }),
         this.iceServers ? Promise.resolve(this.iceServers) : fetchIceServers(),
       ]);
-      if (this.closed) {
+      if (this.closed || this.active) {
+        // Left the table meanwhile, or an earlier attempt got there first.
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
+      this.stuck = false;
+      window.clearTimeout(this.stuckTimer);
       this.stream = stream;
       this.iceServers = ice;
       this.startMeters();
@@ -115,7 +134,11 @@ export class Voice {
       this.callTimer = window.setInterval(() => this.checkCalls(), 2000);
     } catch (e) {
       console.warn('Voice chat could not start', e);
-      if (!this.closed) this.setState('blocked');
+      if (!this.closed && !this.active && attempt === this.attempts) {
+        this.stuck = false;
+        window.clearTimeout(this.stuckTimer);
+        this.setState('blocked');
+      }
     }
   }
 
@@ -176,6 +199,7 @@ export class Voice {
     this.stream = null;
     window.clearInterval(this.meterTimer);
     window.clearInterval(this.callTimer);
+    window.clearTimeout(this.stuckTimer);
     void this.ctx?.close().catch(() => {});
     this.ctx = null;
     this.host.remove();
