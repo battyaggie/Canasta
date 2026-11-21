@@ -21,6 +21,13 @@ Canasta for **2 or 4 players**, playable **live** (everyone online at once) or *
 
 Online tables need the Cloudflare server (next section); pass & play does not.
 
+## Play against the computer
+
+On the home screen, *Play against the computer* starts a game on this device with no internet needed:
+**You against the computer** (2 players) or **You and a partner against two** (4 players, your computer partner sits opposite).
+Choose *Normal* or *Easy*. The computer players follow the same house rules, see only what a player in their seat would see,
+and pause about a second before each move so you can follow along. How they decide is in `engine/src/bot.ts`.
+
 ## On a phone (pass & play, even underground)
 
 A phone cannot reach `npm run local` (that runs on your Mac), so put the app on the internet once (next sections).
@@ -82,7 +89,7 @@ so there is still no bundler.
 ## Checks
 
 ```
-npm test            # 67 tests: rules engine, game room, Durable Object and Worker
+npm test            # 83 tests: rules engine, computer players, game room, Durable Object and Worker
 npm run typecheck
 ```
 
@@ -97,6 +104,7 @@ npx tsx web/e2e/phone.e2e.ts      # four emulated phones, touch only
 npx tsx web/e2e/offline.e2e.ts    # network switched off
 npx tsx web/e2e/table3d.e2e.ts    # the 3D table with a mouse, 2 and 4 players
 npm i -D iwer && npx tsx web/e2e/table3d-xr.e2e.ts   # the 3D table in an emulated Quest 3 (controller and hands)
+npx tsx web/e2e/vscomputer.e2e.ts # you against computer players, 2 and 4 players
 ```
 
 ## What has and has not been tested
@@ -112,5 +120,6 @@ npm i -D iwer && npx tsx web/e2e/table3d-xr.e2e.ts   # the 3D table in an emulat
 ## Not built yet
 
 - Phone or email alerts when it is your turn in a take-turns game (for now: keep your personal link).
-- A time limit per turn, chat, accounts, computer players, and a spectator view.
+- A time limit per turn, chat, accounts, and a spectator view.
+- Computer players at online tables (for now they play only on one device: *Play against the computer*).
 - Final scores are shown but not stored beyond the table's 30-day life.

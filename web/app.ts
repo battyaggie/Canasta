@@ -53,6 +53,7 @@ const form = {
   players: '2',
   mode: 'live' as Mode,
   target: '5000',
+  botLevel: 'normal' as 'easy' | 'normal',
   joinCode: '',
   error: '',
 };
@@ -118,7 +119,8 @@ function handleMessage(msg: ServerMsg): void {
   room = msg.room;
   view = msg.view;
   // Pass & play: hide the cards whenever the turn moves to someone else, and at the start of each hand.
-  if (isLocal && view?.status === 'playing' && (previousSeat !== you || previousStatus !== 'playing')) covered = true;
+  // Not against the computer: there is only one person at the screen.
+  if (isLocal && !vsComputer() && view?.status === 'playing' && (previousSeat !== you || previousStatus !== 'playing')) covered = true;
   reconcileSelection();
   const key = view ? `${view.handNumber}:${view.status}` : '';
   if (key !== lastOverlayKey) {
@@ -139,7 +141,9 @@ function reconcileSelection(): void {
   if (!myPlay || !side?.melds.some((m) => m.rank === target)) target = null;
 }
 
-function openTransport(t: (events: { onMessage: typeof handleMessage; onStatus: (s: Status) => void }) => Transport): void {
+function openTransport(
+  t: (events: { onMessage: typeof handleMessage; onStatus: (s: Status) => void; onNote: (text: string) => void }) => Transport,
+): void {
   resetGameState();
   transport?.close();
   transport = t({
@@ -148,6 +152,7 @@ function openTransport(t: (events: { onMessage: typeof handleMessage; onStatus: 
       status = s;
       render();
     },
+    onNote: showToast,
   });
 }
 
@@ -208,13 +213,17 @@ async function createTable(): Promise<void> {
   }
 }
 
-function startLocal(players: 2 | 4, resume = false): void {
+function startLocal(players: 2 | 4, resume = false, vsComp = false): void {
   const saved = resume ? loadSavedLocal() : null;
   isLocal = true;
   roomCode = 'LOCAL';
-  openTransport((events) => new LocalTransport(saved?.settings.players ?? players, events, saved));
+  const vs = vsComp ? { level: form.botLevel, name: form.name.trim() || undefined } : undefined;
+  openTransport((events) => new LocalTransport(saved?.settings.players ?? players, events, saved, vs));
   render();
 }
+
+/** Playing against computer players on this device. */
+const vsComputer = (): boolean => isLocal && !!room?.settings.bots?.length;
 
 function leave(): void {
   exit3d(false);
@@ -466,7 +475,7 @@ function renderHome(): HTMLElement {
       return h(
         'section',
         { class: 'panel' },
-        h('h2', {}, 'Unfinished pass & play game'),
+        h('h2', {}, saved.settings.bots?.length ? 'Unfinished game against the computer' : 'Unfinished pass & play game'),
         h('p', { class: 'muted' }, `${saved.settings.players} players · hand ${g.handNumber} · score ${g.scores[0]} to ${g.scores[1]}`),
         h(
           'div',
@@ -486,6 +495,27 @@ function renderHome(): HTMLElement {
         { class: 'row buttons' },
         h('button', { id: 'local2', onclick: () => startLocal(2) }, '2 players'),
         h('button', { id: 'local4', onclick: () => startLocal(4) }, '4 players'),
+      ),
+    ),
+    h(
+      'section',
+      { class: 'panel' },
+      h('h2', {}, 'Play against the computer'),
+      h('p', { class: 'muted' }, 'On your own: against one computer player, or with a computer partner against two. No internet needed.'),
+      h(
+        'label',
+        {},
+        'Computer players: ',
+        select('bot-level', form.botLevel, (v) => (form.botLevel = v as 'easy' | 'normal'), [
+          ['normal', 'Normal'],
+          ['easy', 'Easy'],
+        ]),
+      ),
+      h(
+        'div',
+        { class: 'row buttons' },
+        h('button', { id: 'vs2', onclick: () => startLocal(2, false, true) }, 'You against the computer'),
+        h('button', { id: 'vs4', onclick: () => startLocal(4, false, true) }, 'You and a partner against two'),
       ),
     ),
 
@@ -758,7 +788,7 @@ function renderGame(): HTMLElement {
       'header',
       { class: 'topbar' },
       h('span', { class: 'brand' }, 'Canasta'),
-      isLocal ? h('span', { class: 'tag' }, 'pass & play') : h('span', { class: 'tag', id: 'room-code' }, info.code),
+      isLocal ? h('span', { class: 'tag' }, vsComputer() ? 'vs computer' : 'pass & play') : h('span', { class: 'tag', id: 'room-code' }, info.code),
       isLocal ? null : h('span', { class: 'tag' }, info.settings.mode === 'live' ? 'Live' : 'Take turns'),
       !isLocal && info.settings.mode === 'async' && info.lastMoveAt ? h('span', { class: 'muted small' }, `last move ${timeAgo(info.lastMoveAt)}`) : null,
       h('span', { class: 'spacer' }),
