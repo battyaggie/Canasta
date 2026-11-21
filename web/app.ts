@@ -12,7 +12,7 @@ import {
   sideOf,
   sumPoints,
 } from '../engine/src/index.js';
-import type { ClientMsg, Mode, RoomInfo, ServerMsg } from '../shared/protocol.js';
+import type { ClientMsg, Figure, Mode, RoomInfo, ServerMsg } from '../shared/protocol.js';
 import { cardBack, cardEl, cardLabel, handGroup, sortHand } from './cardview.js';
 import { h } from './dom.js';
 import { LocalTransport, clearSavedLocal, loadSavedLocal, type Status, type Transport, WsTransport } from './transport.js';
@@ -59,6 +59,7 @@ const host3d = h('div', { class: 'three-host', id: 'three-host' });
 
 const form = {
   name: safeGet('canasta.name') ?? '',
+  figure: (safeGet('canasta.figure') === 'woman' ? 'woman' : safeGet('canasta.figure') === 'man' ? 'man' : '') as Figure | '',
   players: '2',
   mode: 'live' as Mode,
   target: '5000',
@@ -231,7 +232,7 @@ async function joinOnline(code: string, name: string, tokenFromLink?: string): P
     (events) =>
       new WsTransport(code, events, () => {
         const token = safeGet(`canasta.token.${code}`) ?? undefined;
-        return { t: 'hello', token, name: name || safeGet('canasta.name') || undefined };
+        return { t: 'hello', token, name: name || safeGet('canasta.name') || undefined, ...(form.figure ? { figure: form.figure } : {}) };
       }),
   );
   voice = new Voice(send, render, showSpeaking);
@@ -536,7 +537,25 @@ function renderHome(): HTMLElement {
       );
     })(),
 
-    h('section', { class: 'panel' }, h('h2', {}, 'Your name'), nameInput),
+    h(
+      'section',
+      { class: 'panel' },
+      h('h2', {}, 'Your name'),
+      nameInput,
+      h(
+        'label',
+        { class: 'figure-choice' },
+        'At the 3D table, show me as: ',
+        select('figure', form.figure, (v) => {
+          form.figure = v === 'man' || v === 'woman' ? v : '';
+          safeSet('canasta.figure', form.figure);
+        }, [
+          ['', 'Not chosen'],
+          ['woman', 'A woman'],
+          ['man', 'A man'],
+        ]),
+      ),
+    ),
 
     h(
       'section',
@@ -1158,6 +1177,7 @@ function tableModel(): TableModel {
     view: v,
     seatNames: info.seats.map((_, i) => seatName(i)),
     seatOnline: info.seats.map((s) => isLocal || !!s?.connected),
+    seatFigures: info.seats.map((s) => s?.figure),
     hand: sortHand(v.myHand.filter((id) => !hidden.has(id))),
     selected,
     fresh,

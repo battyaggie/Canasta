@@ -17,8 +17,12 @@ export interface RoomSettings {
   botLevel?: 'easy' | 'normal';
 }
 
+/** How a player appears at the 3D table, as they chose it themselves. */
+export type Figure = 'man' | 'woman';
+
 export interface SeatInfo {
   name: string;
+  figure?: Figure;
   connected: boolean;
   /** This player has joined the voice chat (their microphone is on, or muted but listening). */
   voice?: boolean;
@@ -45,7 +49,7 @@ export type SignalData =
   | { s: string; r?: string; ice: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null } | null };
 
 export type ClientMsg =
-  | { t: 'hello'; token?: string; name?: string }
+  | { t: 'hello'; token?: string; name?: string; figure?: Figure }
   | { t: 'start' }
   | { t: 'action'; action: Action }
   | { t: 'nextHand' }
@@ -139,7 +143,8 @@ export function parseClientMsg(text: string): ClientMsg {
     case 'hello': {
       const token = typeof raw.token === 'string' && raw.token.length <= 100 ? raw.token : undefined;
       const name = typeof raw.name === 'string' ? raw.name : undefined;
-      return { t: 'hello', token, name };
+      const figure = raw.figure === 'man' || raw.figure === 'woman' ? raw.figure : undefined;
+      return { t: 'hello', token, name, ...(figure ? { figure } : {}) };
     }
     case 'start':
       return { t: 'start' };

@@ -30,6 +30,7 @@ try {
   console.log('creating and joining a 2-player live table');
   await anna.page.goto(base);
   await anna.page.fill('#name', 'Anna');
+  await anna.page.selectOption('#figure', 'woman');
   await anna.page.click('#create');
   const code = (await anna.page.locator('#table-code').innerText()).trim();
   check(/^[A-Z0-9]{4}$/.test(code), `Anna gets a 4-character table code (${code})`);
@@ -53,6 +54,17 @@ try {
   await ben.page.locator('#hand .card').first().waitFor();
   const count = (p: any) => p.locator('#hand .card').count();
   check((await count(anna.page)) === 15 && (await count(ben.page)) === 15, 'both players hold 15 cards');
+
+  // Anna chose to appear as a woman: Ben's 3D table shows her that way (the first seat is a man by default).
+  await ben.page.click('#enter-3d');
+  await eventually(
+    () => ben.page.evaluate(() => (window as any).__canasta3d?.figures() ?? []),
+    (f: { seat: number; build: string; loaded: boolean }[]) => f.length === 1 && f[0]!.seat === 0 && f[0]!.build === 'woman' && f[0]!.loaded,
+    "Ben's 3D table shows Anna as the woman she chose",
+    15000,
+  );
+  await ben.page.click('#exit-3d');
+  await ben.page.locator('#hand .card').first().waitFor();
   const labelsOf = (p: any) => p.locator('#hand .card').evaluateAll((els: Element[]) => els.map((e) => e.getAttribute('aria-label')));
   check(JSON.stringify(await labelsOf(anna.page)) !== JSON.stringify(await labelsOf(ben.page)), 'the two players hold different cards');
 

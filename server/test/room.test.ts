@@ -31,6 +31,17 @@ describe('lobby', () => {
     assert.throws(() => room.join('Third', undefined), RoomError);
   });
 
+  it('remembers the figure each player chose for the 3D table, and a new choice on return', () => {
+    const room = Room.create('ABCD', { players: 2, mode: 'live', targetScore: 5000 }, deps());
+    const mark = room.join('Mark', undefined, 'man');
+    room.join('Anna', undefined);
+    assert.deepEqual(room.info([true, true]).seats.map((s) => s?.figure), ['man', undefined]);
+    room.join(undefined, mark.token, 'woman');
+    assert.equal(room.info([true, true]).seats[0]?.figure, 'woman');
+    assert.deepEqual(parseClientMsg('{"t":"hello","name":"A","figure":"woman"}'), { t: 'hello', token: undefined, name: 'A', figure: 'woman' });
+    assert.deepEqual(parseClientMsg('{"t":"hello","figure":"dragon"}'), { t: 'hello', token: undefined, name: undefined });
+  });
+
   it('lets a player return to their seat with their token, even after the game starts', () => {
     const { room, tokens } = fullRoom(4);
     room.start(0);

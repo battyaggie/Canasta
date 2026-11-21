@@ -17,7 +17,7 @@ import {
   startNextHand,
   viewFor,
 } from '../engine/src/index.js';
-import type { Phase, RoomInfo, RoomSettings } from '../shared/protocol.js';
+import type { Figure, Phase, RoomInfo, RoomSettings } from '../shared/protocol.js';
 
 export class RoomError extends Error {
   constructor(message: string) {
@@ -30,7 +30,7 @@ export interface RoomData {
   code: string;
   settings: RoomSettings;
   /** Seat i is seats[i]. Seats fill in order: 0, 1, 2, 3. */
-  seats: { name: string; token: string }[];
+  seats: { name: string; token: string; figure?: Figure }[];
   phase: Phase;
   game: GameState | null;
   lastMoveAt: number | null;
@@ -73,10 +73,14 @@ export class Room {
   }
 
   /** Sit down at the table, or come back to your seat with the token you were given. */
-  join(rawName: string | undefined, token: string | undefined): { seat: number; token: string } {
+  join(rawName: string | undefined, token: string | undefined, figure?: Figure): { seat: number; token: string } {
     if (token) {
       const seat = this.data.seats.findIndex((s) => s.token === token);
-      if (seat >= 0) return { seat, token };
+      if (seat >= 0) {
+        // Coming back with a different choice of figure for the 3D table: use the new one.
+        if (figure) this.data.seats[seat]!.figure = figure;
+        return { seat, token };
+      }
     }
     if (this.data.phase !== 'lobby') {
       throw new RoomError('This game has already started. Use your personal link on the device you first joined from.');
@@ -84,7 +88,7 @@ export class Room {
     if (this.data.seats.length >= this.data.settings.players) throw new RoomError('This table is full.');
     const seat = this.data.seats.length;
     const newToken = this.deps.randomToken();
-    this.data.seats.push({ name: cleanName(rawName, seat), token: newToken });
+    this.data.seats.push({ name: cleanName(rawName, seat), token: newToken, ...(figure ? { figure } : {}) });
     return { seat, token: newToken };
   }
 
@@ -142,7 +146,7 @@ export class Room {
     const seats: RoomInfo['seats'] = [];
     for (let i = 0; i < this.data.settings.players; i++) {
       const s = this.data.seats[i];
-      seats.push(s ? { name: s.name, connected: connected[i] === true, ...(voice[i] ? { voice: true } : {}) } : null);
+      seats.push(s ? { name: s.name, connected: connected[i] === true, ...(s.figure ? { figure: s.figure } : {}), ...(voice[i] ? { voice: true } : {}) } : null);
     }
     return {
       code: this.data.code,
